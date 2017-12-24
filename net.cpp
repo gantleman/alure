@@ -31,6 +31,7 @@ THE SOFTWARE.
 #include <string>
 #include "md5.h"
 #include "sha1.h"
+#include <list>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -117,18 +118,13 @@ void print_hex(FILE *f, const unsigned char *buf, int buflen)
    interesting happens.  Right now, it only happens when we get a new value or
    when a search completes, but this may be extended in future versions. */
 static void
-callback(DHT D, void *closure,
-         int event,
-         const unsigned char *info_hash,
-         const void *data, size_t data_len)
+msg_callback(ALURE A, const char* topic,
+void *closure,
+const char* msg, size_t msglen)
 {
-    if(event == DHT_EVENT_SEARCH_DONE)
-        printf("Search done.\n");
-	else if (event == DHT_EVENT_VALUES){
-		std::string value;
-		value.append((char*)data, data_len);
-		printf("Received %s, %d values.\n", value.c_str(), data_len);
-	}
+	std::string value;
+	value.append((char*)msg, msglen);
+	printf("%s Received %s, %d\n", topic, value.c_str(), msglen);
        
 }
 
@@ -179,14 +175,15 @@ int main(int argc, char **argv)
     int have_id = 0;
     unsigned char myid[20];
     time_t tosleep = 0;
-	char id_file[256] = { "ddkv.id" };
-	char ip_file[256] = { "ddkv.ip" };
+	char id_file[256] = { "alure.id" };
+	char ip_file[256] = { "alure.ip" };
     int opt;
-    int quiet = 0, ipv4 = 1, ipv6 = 1, safe = 1;
+    int quiet = 0, ipv6 = 0, safe = 1;
     struct sockaddr_in sin;
     struct sockaddr_in6 sin6;
     struct sockaddr_storage from;
-    socklen_t fromlen;
+    socklen_t fromlen, melen;
+	struct sockaddr me;
 	FILE* dht_debug = NULL;
 
 #ifdef _WIN32
@@ -214,20 +211,23 @@ int main(int argc, char **argv)
 
         switch(opt) {
         case 'q': quiet = 1; break;
-        case '4': ipv6 = 0; break;
-        case '6': ipv4 = 0; break;
+        case '6': ipv6 = 1; break;
 		case 's': safe = 0; break;
         case 'b': {
             char buf[16];
             int rc;
             rc = inet_pton(AF_INET, optarg, buf);
-            if(rc == 1) {
+			if (!ipv6 && rc == 1) {
+				me.sa_family = AF_INET;
                 memcpy(&sin.sin_addr, buf, 4);
+				memcpy(&me.sa_data, buf, 4);
                 break;
             }
             rc = inet_pton(AF_INET6, optarg, buf);
-            if(rc == 1) {
+			if (ipv6 && rc == 1) {
+				me.sa_family = AF_INET6;
                 memcpy(&sin6.sin6_addr, buf, 16);
+				memcpy(&me.sa_data, buf, 16);
                 break;
             }
             goto usage;
@@ -262,7 +262,7 @@ int main(int argc, char **argv)
 	if (!have_id) {
 		FILE * ofd;
 
-		dht_random_bytes(myid, 20);
+		alure_random_bytes(myid, 20);
 
 		ofd = fopen(id_file, "wb+");
 		if (ofd > 0) {
@@ -282,16 +282,16 @@ int main(int argc, char **argv)
 			char* rt = fgets(fline, 128, fd);
 			if (rt == 0)
 				break;
+
 			sscanf(fline, "%[^:]:%[^:\n]", sip, sport);
 			struct addrinfo hints, *info, *infop;
 			memset(&hints, 0, sizeof(hints));
 			hints.ai_socktype = SOCK_DGRAM;
+
 			if (!ipv6)
 				hints.ai_family = AF_INET;
-			else if (!ipv4)
-				hints.ai_family = AF_INET6;
 			else
-				hints.ai_family = 0;
+				hints.ai_family = AF_INET6;
 
 			rc = getaddrinfo(sip, sport, &hints, &info);
 			if (rc != 0) {
@@ -330,14 +330,12 @@ int main(int argc, char **argv)
        has it that uTorrent works better when it is the same as your
        Bittorrent port. */
 
-    if(ipv4) {
+	if (!ipv6) {
         s = socket(PF_INET, SOCK_DGRAM, 0);
         if(s < 0) {
             perror("socket(IPv4)");
         }
-    }
-
-    if(ipv6) {
+    }else {
         s6 = socket(PF_INET6, SOCK_DGRAM, 0);
         if(s6 < 0) {
             perror("socket(IPv6)");
@@ -382,9 +380,9 @@ int main(int argc, char **argv)
         }
     }
 
-	DHT D;
+	ALURE D;
     /* Init the dht.  This sets the socket into non-blocking mode. */
-	rc = dht_init(&D, s, s6, myid, (unsigned char*)"JC\0\0", dht_debug, sin, sin6);
+	rc = alure_init(&D, s, myid, (unsigned char*)"JC\0\0", dht_debug, me, msg_callback);
     if(rc < 0) {
         perror("dht_init");
         exit(1);
@@ -400,7 +398,7 @@ int main(int argc, char **argv)
        a dump) and you already know their ids, it's better to use
        dht_insert_node.  If the ids are incorrect, the DHT will recover. */
     for(i = 0; i < num_bootstrap_nodes; i++) {
-		dht_ping_node(D, (struct sockaddr*)&bootstrap_nodes[i],
+		alure_ping_node(D, (struct sockaddr*)&bootstrap_nodes[i],
                       sizeof(bootstrap_nodes[i]));
         sleep(random() % 3);
     }
@@ -414,8 +412,9 @@ int main(int argc, char **argv)
         FD_ZERO(&readfds);
         if(s >= 0)
             FD_SET(s, &readfds);
-        if(s6 >= 0)
+        else if(s6 >= 0)
             FD_SET(s6, &readfds);
+
         rc = select(s > s6 ? s + 1 : s6 + 1, &readfds, NULL, NULL, &tv);
         if(rc < 0) {
             if(errno != EINTR) {
@@ -440,7 +439,7 @@ int main(int argc, char **argv)
 			if (strncmp(buf, CCMD, SCCMD) != 0)
 			{
 				buf[rc] = '\0';
-				rc = dht_periodic(D, buf, rc, (struct sockaddr*)&from, fromlen,
+				rc = alure_periodic(D, buf, rc, (struct sockaddr*)&from, fromlen,
 					&tosleep);
 			}
 			else
@@ -470,24 +469,10 @@ int main(int argc, char **argv)
 
 					int len = strlen(sv);
 
-					if (s >= 0)
-						dht_search(D, sc.buf, len ? 1 : 0, AF_INET, callback, NULL, sv, len);
-					if (s6 >= 0)
-						dht_search(D, sc.buf, len ? 1 : 0, AF_INET6, callback, NULL, sv, len);
-				}
-				else if (pcmd[0] == 'd') {/* For debugging, or idle curiosity. */
-					dht_dump_tables(D, stdout);
-				}
-				else if (pcmd[0] == 'n') {
-					struct sockaddr_in sin[500];
-					int num = 500;
-					int i;
-					i = dht_get_nodes(D, sin, &num);
-					printf("Found %d (%d + %d) good nodes.\n", i, num);					
 				}
 			}
         } else {
-			rc = dht_periodic(D, NULL, 0, NULL, 0, &tosleep);
+			rc = alure_periodic(D, NULL, 0, NULL, 0, &tosleep);
         }
         if(rc < 0) {
             if(errno == EINTR) {
@@ -501,7 +486,7 @@ int main(int argc, char **argv)
         }
     }
 
-	dht_uninit(D);
+	alure_uninit(D);
     return 0;
     
  usage:
@@ -509,44 +494,31 @@ int main(int argc, char **argv)
     exit(1);
 }
 
-/* Functions called by the DHT. */
-
-int
-dht_blacklisted(const struct sockaddr *sa, int salen)
-{
-    return 0;
-}
-
-/* We need to provide a reasonably strong cryptographic hashing function.
-   Here's how we'd do it if we had RSA's MD5 code. */
-
 void
-dht_hash(void *hash_return, int hash_size,
-         void *v1, int len1,
-         void *v2, int len2,
-         void *v3, int len3)
-{
-    static MD5_CTX ctx;
-	unsigned char decrypt[16];
-    MD5Init(&ctx);
-	MD5Update(&ctx, (unsigned char*)v1, len1);
-	MD5Update(&ctx, (unsigned char*)v2, len2);
-	MD5Update(&ctx, (unsigned char*)v3, len3);
-	MD5Final(&ctx, decrypt);
-    if(hash_size > 16)
-        memset((char*)hash_return + 16, 0, hash_size - 16);
-    memcpy(hash_return, ctx.buffer, hash_size > 16 ? 16 : hash_size);
-}
-
-int
-dht_random_bytes(void *buf, size_t size)
+alure_random_bytes(void *buf, size_t size)
 {
 	srand((unsigned int)time(0));
 
 	char* pbuf = (char*)buf;
-	for (size_t i = 0; i < size; i++)
-	{
+	for (size_t i = 0; i < size; i++) {
 		pbuf[i] = rand();
 	}
-	return 1;
+}
+
+void
+alure_hash(void *hash_return, int hash_size,
+void *v1, int len1,
+void *v2, int len2,
+void *v3, int len3)
+{
+	static MD5_CTX ctx;
+	unsigned char decrypt[16];
+	MD5Init(&ctx);
+	MD5Update(&ctx, (unsigned char*)v1, len1);
+	MD5Update(&ctx, (unsigned char*)v2, len2);
+	MD5Update(&ctx, (unsigned char*)v3, len3);
+	MD5Final(&ctx, decrypt);
+	if (hash_size > 16)
+		memset((char*)hash_return + 16, 0, hash_size - 16);
+	memcpy(hash_return, ctx.buffer, hash_size > 16 ? 16 : hash_size);
 }

@@ -19,67 +19,36 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
-
-#define DHT void*
-
-typedef void
-dht_callback(DHT D,
-			 void *closure, int event,
-             const unsigned char *info_hash,
-             const void *data, size_t data_len);
-
-#define DHT_EVENT_NONE 0
-#define DHT_EVENT_VALUES 1
-#define DHT_EVENT_VALUES6 2
-#define DHT_EVENT_SEARCH_DONE 3
-#define DHT_EVENT_SEARCH_DONE6 4
-
-int dht_init(DHT* D, int s, int s6, const unsigned char *id,
-			const unsigned char *v, FILE* df,
-			struct sockaddr_in &sin,
-			struct sockaddr_in6 &sin6);
-int dht_insert_node(DHT D, const unsigned char *id, struct sockaddr *sa, int salen);
-int dht_ping_node(DHT D, const struct sockaddr *sa, int salen);
-int dht_periodic(DHT D, const void *buf, size_t buflen,
-                 const struct sockaddr *from, int fromlen,
-                 time_t *tosleep);
-int dht_search(DHT D, const unsigned char *id, int pg, int af,
-               dht_callback *callback, void *closure, const char* buf=0, int len=0);
-int dht_nodes(DHT D, int af,
-              int *good_return, int *dubious_return,
-              int *incoming_return);
-void dht_dump_tables(DHT D, FILE *f);
-int dht_get_nodes(DHT D, struct sockaddr_in *sin, int *num);
-int dht_uninit(DHT D);
-
-/* This must be provided by the user. */
-int dht_blacklisted(const struct sockaddr *sa, int salen);
-void dht_hash(void *hash_return, int hash_size,
-              void *v1, int len1,
-              void *v2, int len2,
-              void *v3, int len3);
-int dht_random_bytes(void *buf, size_t size);
-
-//////////////////////////////////////////////////////////////////////////
 #define ALURE void*
-int alure_init(ALURE* A, int s, const unsigned char *id,
-const unsigned char *v, FILE* df,
-struct sockaddr &sin);
-int alure_uninit(ALURE A);
-
-int alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
-int alure_broadcast(ALURE A, const char* topic, const char* msg, int msglen);
-
-///if topic is '*' recive all message
-///map<string topic, set<void* closuer>>
-void alure_filter_add(ALURE A, const char* topic, void *closure);
-void alure_filter_del(ALURE A, const char* topic, void *closure);
 ///revice msg
 typedef void
 alure_callback(ALURE A, const char* topic,
 void *closure,
 const char* msg, size_t msglen);
 
-int dht_periodic(ALURE A, const void *buf, size_t buflen,
+int alure_init(ALURE* A, int s, const unsigned char *id,
+const unsigned char *v, FILE* df,
+struct sockaddr &sin, alure_callback* cb);
+void alure_uninit(ALURE A);
+
+void alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
+void alure_broadcast(ALURE A, const char* topic, const char* msg, int msglen);
+
+///if topic is '*' recive all message
+///map<string topic, set<void* closuer>>
+void alure_filter_add(ALURE A, const char* topic, void *closure);
+void alure_filter_del(ALURE A, const char* topic, void *closure);
+void alure_filter_list(ALURE A, std::list<std::string>&topic);
+void alure_filter_list(ALURE A, const char* topic, std::list<void*> &closure);
+
+int alure_periodic(ALURE A, const void *buf, size_t buflen,
 	const struct sockaddr *from, int fromlen,
 	time_t *tosleep);
+
+void alure_random_bytes(void *buf, size_t size);
+
+void
+alure_hash(void *hash_return, int hash_size,
+void *v1, int len1,
+void *v2, int len2,
+void *v3, int len3);
