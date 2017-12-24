@@ -17,7 +17,7 @@ SET(SRC_LIST ${SRC_LIST} net.cpp
 SET(SRC_LIST ${SRC_LIST} contrib/bcode.cpp
 		contrib/cJSON.c
 		contrib/md5.c
-		contrib/sha1.c
+		contrib/sha1.c)
 IF(WIN32)
 SET(SRC_LIST ${SRC_LIST} contrib/getopt_long.c)
 ENDIF(WIN32)

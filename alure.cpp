@@ -1,5 +1,4 @@
 /*
-Copyright (c) 2009-2011 by Juliusz Chroboczek
 Copyright (c) 2009-2011 by shuo sun(dds_sun@hotmail.com)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,10 +19,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
-
-/* For memmem. */
-#define _GNU_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>

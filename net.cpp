@@ -52,7 +52,7 @@ THE SOFTWARE.
 #define  random rand
 #endif
 
-#include "whiteboard.h"
+#include "alure.h"
 
 #define CCMD "[control]"
 #define SCCMD  sizeof(CCMD) - 1

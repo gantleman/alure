@@ -1,5 +1,4 @@
 /*
-Copyright (c) 2009-2011 by Juliusz Chroboczek
 Copyright (c) 2009-2011 by shuo sun(dds_sun@hotmail.com)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -61,3 +60,26 @@ void dht_hash(void *hash_return, int hash_size,
               void *v3, int len3);
 int dht_random_bytes(void *buf, size_t size);
 
+//////////////////////////////////////////////////////////////////////////
+#define ALURE void*
+int alure_init(ALURE* A, int s, const unsigned char *id,
+const unsigned char *v, FILE* df,
+struct sockaddr &sin);
+int alure_uninit(ALURE A);
+
+int alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
+int alure_broadcast(ALURE A, const char* topic, const char* msg, int msglen);
+
+///if topic is '*' recive all message
+///map<string topic, set<void* closuer>>
+void alure_filter_add(ALURE A, const char* topic, void *closure);
+void alure_filter_del(ALURE A, const char* topic, void *closure);
+///revice msg
+typedef void
+alure_callback(ALURE A, const char* topic,
+void *closure,
+const char* msg, size_t msglen);
+
+int dht_periodic(ALURE A, const void *buf, size_t buflen,
+	const struct sockaddr *from, int fromlen,
+	time_t *tosleep);
