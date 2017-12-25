@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 2.6)
-project (Whiteboard)
+project (alure)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
 
