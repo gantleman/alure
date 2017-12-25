@@ -73,18 +73,6 @@ extern int dht_gettimeofday(struct timeval *tv, struct timezone *tz);
 #define EAFNOSUPPORT WSAEAFNOSUPPORT
 
 static int
-set_nonblocking(int fd, int nonblocking)
-{
-	int rc;
-
-	unsigned long mode = !!nonblocking;
-	rc = ioctlsocket(fd, FIONBIO, &mode);
-	if (rc != 0)
-		errno = WSAGetLastError();
-	return (rc == 0 ? 0 : -1);
-}
-
-static int
 random(void)
 {
 	return rand();
@@ -99,23 +87,6 @@ extern const char *inet_ntop(int, const void *, char *, socklen_t);
 /* There is no snprintf in MSVCRT. */
 #define snprintf _snprintf
 #endif
-
-#else
-
-static int
-set_nonblocking(int fd, int nonblocking)
-{
-	int rc;
-	rc = fcntl(fd, F_GETFL, 0);
-	if (rc < 0)
-		return -1;
-
-	rc = fcntl(fd, F_SETFL, nonblocking ? (rc | O_NONBLOCK) : (rc & ~O_NONBLOCK));
-	if (rc < 0)
-		return -1;
-
-	return 0;
-}
 
 #endif
 
@@ -287,6 +258,25 @@ unsigned short *seqno_return)
 		return 0;
 }
 
+static int
+xorcmp(const unsigned char *id1, const unsigned char *id2,
+const unsigned char *ref)
+{
+	int i;
+	for (i = 0; i < IDLEN; i++) {
+		unsigned char xor1, xor2;
+		if (id1[i] == id2[i])
+			continue;
+		xor1 = id1[i] ^ ref[i];
+		xor2 = id2[i] ^ ref[i];
+		if (xor1 < xor2)
+			return -1;
+		else
+			return 1;
+	}
+	return 0;
+}
+
 int alure_init(ALURE* OutD, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
 struct sockaddr &sin, alure_callback* cb)
@@ -295,14 +285,7 @@ struct sockaddr &sin, alure_callback* cb)
 	palure A = new alure;
 	*OutD = A;
 	A->dht_debug = df;
-
 	A->ping_neighbourhood_time = 0;
-
-	if (s >= 0) {
-		rc = set_nonblocking(s, 1);
-		if (rc < 0)
-			return 0;
-	}
 	memcpy(A->myid, id, IDLEN);
 	memcpy(A->v, v, 4);
 	dht_gettimeofday(&A->now, NULL);
@@ -502,7 +485,7 @@ const struct sockaddr *sa, int salen)
 		return -1;
 	}
 
-	return sendto(A->alure_socket, (char *)buf, len, flags, sa, salen);
+	return alure_send(A->alure_socket, buf, len, flags, sa, salen);
 }
 
 int
@@ -516,6 +499,195 @@ const unsigned char *tid, int tid_len)
 	b_insert(&out, "v", A->v, sizeof(A->v));
 	b_insertd(&out, "r", &r);
 	b_insert(r, "id", A->myid, IDLEN);
+	b_package(&out, so);
+	return send_wrap(A, so.c_str(), so.size(), 0, sa, salen);
+}
+
+static int
+is_gossip(palure A, unsigned char *gid)
+{
+	std::vector<unsigned char> k;
+	k.resize(IDLEN);
+	memcpy(&k[0], gid, IDLEN);
+
+	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.find(k);
+	if (iterg == A->gossip.end())
+		return 0;
+	return 1;
+}
+
+static void
+send_gossip_step(palure A, unsigned char *gid, const char* buf, int len)
+{
+	debugf(A, "send gossip step.");
+	std::vector<unsigned char> k;
+	k.resize(IDLEN);
+	memcpy(&k[0], gid, IDLEN);
+
+	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.find(k);
+	if (iterg == A->gossip.end())
+		return;
+
+	A->gossip[k] = A->now.tv_sec;
+	std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.begin();
+	for (; iter != A->routetable.end(); iter++) {
+		send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+	}
+}
+
+static void
+expire_gossip(palure A)
+{
+	debugf(A, "expire gossip.");
+	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.begin();
+	for (; iterg != A->gossip.end();) {
+		if (A->now.tv_sec - iterg->second > 10 * 60) {
+			iterg = A->gossip.erase(iterg);
+		} else
+			iterg++;
+	}
+
+}
+
+static int
+node_good(palure A, struct node *node)
+{
+	return node->pinged <= 2;
+}
+
+static int
+insert_closest_node(unsigned char *nodes, int numnodes,
+const unsigned char *id, struct node *n)
+{
+	int i, size;
+
+	if (n->ss.sa_family == AF_INET)
+		size = 26;
+	else if (n->ss.sa_family == AF_INET6)
+		size = 38;
+	else
+		abort();
+
+	for (i = 0; i < numnodes; i++) {
+		if (id_cmp(n->id, nodes + size * i) == 0)
+			return numnodes;
+		if (xorcmp(n->id, nodes + size * i, id) < 0)
+			break;
+	}
+
+	if (i == 8)
+		return numnodes;
+
+	if (numnodes < 8)
+		numnodes++;
+
+	if (i < numnodes - 1)
+		memmove(nodes + size * (i + 1), nodes + size * i,
+		size * (numnodes - i - 1));
+
+	if (n->ss.sa_family == AF_INET) {
+		struct sockaddr_in *sin = (struct sockaddr_in*)&n->ss;
+		memcpy(nodes + size * i, n->id, IDLEN);
+		memcpy(nodes + size * i + IDLEN, &sin->sin_addr, 4);
+		memcpy(nodes + size * i + 24, &sin->sin_port, 2);
+	} else if (n->ss.sa_family == AF_INET6) {
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6*)&n->ss;
+		memcpy(nodes + size * i, n->id, IDLEN);
+		memcpy(nodes + size * i + IDLEN, &sin6->sin6_addr, 16);
+		memcpy(nodes + size * i + 36, &sin6->sin6_port, 2);
+	} else {
+		abort();
+	}
+
+	return numnodes;
+}
+
+static int
+buffer_closest_nodes(palure A, unsigned char *nodes, int numnodes,
+const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
+{
+	std::vector<unsigned char> k;
+	k.resize(IDLEN);
+	memcpy(&k[0], id, IDLEN);
+
+	std::map<std::vector<unsigned char>, node>::iterator iter2, iter = iter2 = r->lower_bound(k);
+	for (int i = 0; iter != r->end() && i < 8; iter--) {
+		struct node *n = &iter->second;
+		if (node_good(A, n)) {
+			i++;
+			numnodes = insert_closest_node(nodes, numnodes, id, n);
+		}
+	}
+
+	for (int i = 0; iter2 != r->end() && i < 8; iter2++) {
+		struct node *n = &iter2->second;
+		if (node_good(A, n)) {
+			i++;
+			numnodes = insert_closest_node(nodes, numnodes, id, n);
+		}
+
+	}
+	return numnodes;
+}
+
+int
+send_nodes(palure A, const struct sockaddr *sa, int salen,
+const unsigned char *tid, int tid_len,
+const unsigned char *nodes, int nodes_len,
+const unsigned char *nodes6, int nodes6_len,
+int af, const unsigned char *token, int token_len)
+{
+	b_element out, *r;
+	std::string so;
+	b_insert(&out, "y", (unsigned char*)"r", 1);
+	b_insert(&out, "t", (unsigned char*)tid, tid_len);
+	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insertd(&out, "r", &r);
+	b_insert(r, "id", A->myid, IDLEN);
+	if (nodes_len > 0)
+		b_insert(r, "nodes", (unsigned char*)nodes, nodes_len);
+	if (nodes6_len > 0)
+		b_insert(r, "nodes6", (unsigned char*)nodes6, nodes6_len);
+	if (token_len > 0)
+		b_insert(r, "token", (unsigned char*)token, token_len);
+	b_package(&out, so);
+	return send_wrap(A, so.c_str(), so.size(), 0, sa, salen);
+}
+
+int
+send_closest_nodes(palure A, const struct sockaddr *sa, int salen,
+const unsigned char *tid, int tid_len,
+const unsigned char *id,
+int af, const unsigned char *token, int token_len)
+{
+	unsigned char nodes[8 * 26];
+	unsigned char nodes6[8 * 38];
+	int numnodes = 0, numnodes6 = 0;
+
+	numnodes = buffer_closest_nodes(A, nodes, numnodes, id, &A->routetable);
+
+	debugf(A, "  (%d+%d nodes.)\n", numnodes, numnodes6);
+
+	return send_nodes(A, sa, salen, tid, tid_len,
+		nodes, numnodes * 26,
+		nodes6, numnodes6 * 38,
+		af, token, token_len);
+}
+
+int
+send_find_node(palure A, const struct sockaddr *sa, int salen,
+const unsigned char *tid, int tid_len,
+const unsigned char *target, int want, int confirm)
+{
+	b_element out, *a;
+	std::string so;
+	b_insert(&out, "y", (unsigned char*)"q", 1);
+	b_insert(&out, "t", (unsigned char*)tid, tid_len);
+	b_insert(&out, "q", (unsigned char*)"find_node", 9);
+	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insertd(&out, "a", &a);
+	b_insert(a, "id", A->myid, IDLEN);
+	b_insert(a, "target", (unsigned char*)target, IDLEN);
 	b_package(&out, so);
 	return send_wrap(A, so.c_str(), so.size(), 0, sa, salen);
 }
@@ -560,10 +732,40 @@ const struct sockaddr *from, int fromlen
 		node_ponged(A, id, from, fromlen);
 		if (tid_match(tid, "pn", NULL)) {
 			debugf(A, "Pong!\n");
-		} else {
-			debugf(A, "Unexpected reply: ");
-			debug_printable(A, (unsigned char *)buf, buflen);
-			debugf(A, "\n");
+		} else if (tid_match(tid, "fn", NULL)) {
+			unsigned char *nodes, *nodes6;
+			int nodes_len, nodes6_len;
+			b_find(r, "nodes", &nodes, nodes_len);
+			b_find(r, "nodes6", &nodes6, nodes6_len);
+
+			if (nodes_len % 26 != 0 || nodes6_len % 38 != 0) {
+				debugf(A, "Unexpected length for node info!\n");
+				blacklist_node(A, id, from, fromlen);
+			} else {
+				int i;
+				for (i = 0; i < nodes_len / 26; i++) {
+					unsigned char *ni = nodes + i * 26;
+					struct sockaddr_in sin;
+					if (id_cmp(ni, A->myid) == 0)
+						continue;
+					memset(&sin, 0, sizeof(sin));
+					sin.sin_family = AF_INET;
+					memcpy(&sin.sin_addr, ni + IDLEN, 4);
+					memcpy(&sin.sin_port, ni + 24, 2);
+					new_node(A, ni, (struct sockaddr*)&sin, sizeof(sin));
+				}
+				for (i = 0; i < nodes6_len / 38; i++) {
+					unsigned char *ni = nodes6 + i * 38;
+					struct sockaddr_in6 sin6;
+					if (id_cmp(ni, A->myid) == 0)
+						continue;
+					memset(&sin6, 0, sizeof(sin6));
+					sin6.sin6_family = AF_INET6;
+					memcpy(&sin6.sin6_addr, ni + IDLEN, 16);
+					memcpy(&sin6.sin6_port, ni + 36, 2);
+					new_node(A, ni, (struct sockaddr*)&sin6, sizeof(sin6));
+				}
+			}
 		}
 	} else if (y_return[0] == 'q') {
 		unsigned char *q_return;
@@ -585,6 +787,17 @@ const struct sockaddr *from, int fromlen
 			debugf(A, "Ping (%d)!\n", tid_len);
 			debugf(A, "Sending pong.\n");
 			send_pong(A, from, fromlen, tid, tid_len);
+		} else if (memcmp(q_return, "find_node", q_len) == 0) {
+			unsigned char *target;
+			int target_len;
+			b_find(a, "target", &target, target_len);
+			if (target_len == 0)
+				goto dontread;
+
+			debugf(A, "Find node!\n");
+			debugf(A, "Sending closest nodes.\n");
+			send_closest_nodes(A, from, fromlen,
+				tid, tid_len, target, NULL, NULL, 0);
 		}
 	}
 
@@ -613,4 +826,6 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 			process_message(A, (unsigned char*)buf, buflen, from, fromlen);
 		}
 	}
+
+	return 0;
 }

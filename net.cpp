@@ -102,6 +102,40 @@ int dht_gettimeofday(struct timeval *tv, struct timezone *tz)
 }
 #endif
 
+
+#ifdef _WIN32
+static int
+set_nonblocking(int fd, int nonblocking)
+{
+	int rc;
+
+	unsigned long mode = !!nonblocking;
+	rc = ioctlsocket(fd, FIONBIO, &mode);
+	if (rc != 0)
+		errno = WSAGetLastError();
+	return (rc == 0 ? 0 : -1);
+}
+
+#else
+
+static int
+set_nonblocking(int fd, int nonblocking)
+{
+	int rc;
+	rc = fcntl(fd, F_GETFL, 0);
+	if (rc < 0)
+		return -1;
+
+	rc = fcntl(fd, F_SETFL, nonblocking ? (rc | O_NONBLOCK) : (rc & ~O_NONBLOCK));
+	if (rc < 0)
+		return -1;
+
+	return 0;
+}
+
+#endif
+
+
 #define MAX_BOOTSTRAP_NODES 20
 static struct sockaddr_storage bootstrap_nodes[MAX_BOOTSTRAP_NODES];
 static int num_bootstrap_nodes = 0;
@@ -171,7 +205,7 @@ int main(int argc, char **argv)
 {
 	FILE* fd;
     int i, rc;
-    int s = -1, s6 = -1, port;
+    int s = -1, port;
     int have_id = 0;
     unsigned char myid[20];
     time_t tosleep = 0;
@@ -336,32 +370,30 @@ int main(int argc, char **argv)
             perror("socket(IPv4)");
         }
     }else {
-        s6 = socket(PF_INET6, SOCK_DGRAM, 0);
-        if(s6 < 0) {
+        s = socket(PF_INET6, SOCK_DGRAM, 0);
+        if(s < 0) {
             perror("socket(IPv6)");
         }
     }
 
-    if(s < 0 && s6 < 0) {
+    if(s < 0) {
         fprintf(stderr, "Eek!");
         exit(1);
     }
 
 
-    if(s >= 0) {
+    if(s >= 0 && ipv6 == 0) {
         sin.sin_port = htons(port);
         rc = bind(s, (struct sockaddr*)&sin, sizeof(sin));
         if(rc < 0) {
             perror("bind(IPv4)");
             exit(1);
         }
-    }
-
-    if(s6 >= 0) {
+	} else if (s >= 0 && ipv6 != 0) {
         int rc;
         int val = 1;
 
-        rc = setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY,
+        rc = setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
                         (char *)&val, sizeof(val));
         if(rc < 0) {
             perror("setsockopt(IPV6_V6ONLY)");
@@ -373,12 +405,18 @@ int main(int argc, char **argv)
            happens if the user used the -b flag. */
 
         sin6.sin6_port = htons(port);
-        rc = bind(s6, (struct sockaddr*)&sin6, sizeof(sin6));
+        rc = bind(s, (struct sockaddr*)&sin6, sizeof(sin6));
         if(rc < 0) {
             perror("bind(IPv6)");
             exit(1);
         }
     }
+
+	if (s >= 0) {
+		rc = set_nonblocking(s, 1);
+		if (rc < 0)
+			return 0;
+	}
 
 	ALURE D;
     /* Init the dht.  This sets the socket into non-blocking mode. */
@@ -412,10 +450,8 @@ int main(int argc, char **argv)
         FD_ZERO(&readfds);
         if(s >= 0)
             FD_SET(s, &readfds);
-        else if(s6 >= 0)
-            FD_SET(s6, &readfds);
-
-        rc = select(s > s6 ? s + 1 : s6 + 1, &readfds, NULL, NULL, &tv);
+ 
+        rc = select(s + 1 , &readfds, NULL, NULL, &tv);
         if(rc < 0) {
             if(errno != EINTR) {
                 perror("select");
@@ -428,10 +464,7 @@ int main(int argc, char **argv)
             if(s >= 0 && FD_ISSET(s, &readfds))
                 rc = recvfrom(s, buf, sizeof(buf) - 1, 0,
                               (struct sockaddr*)&from, &fromlen);
-			else if (s6 >= 0 && FD_ISSET(s6, &readfds))
-				rc = recvfrom(s6, buf, sizeof(buf) - 1, 0,
-				(struct sockaddr*)&from, &fromlen);
-			else
+			else 
 				abort();
         }
 
@@ -521,4 +554,10 @@ void *v3, int len3)
 	if (hash_size > 16)
 		memset((char*)hash_return + 16, 0, hash_size - 16);
 	memcpy(hash_return, ctx.buffer, hash_size > 16 ? 16 : hash_size);
+}
+
+int alure_send(int s, const void *buf, size_t len, int flags,
+	const struct sockaddr *sa, int salen)
+{
+	return sendto(s, (char*)buf, len, flags, sa, salen);
 }

@@ -47,8 +47,10 @@ int alure_periodic(ALURE A, const void *buf, size_t buflen,
 
 void alure_random_bytes(void *buf, size_t size);
 
-void
-alure_hash(void *hash_return, int hash_size,
+void alure_hash(void *hash_return, int hash_size,
 void *v1, int len1,
 void *v2, int len2,
 void *v3, int len3);
+
+int alure_send(int s, const void *buf, size_t len, int flags,
+const struct sockaddr *sa, int salen);
