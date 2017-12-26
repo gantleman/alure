@@ -185,6 +185,9 @@ typedef struct _alure {
 	time_t ping_neighbourhood_time;
 
 	std::map<std::string, std::set<void*>> filter;
+
+	time_t confirm_nodes_time;
+	time_t mybucket_grow_time;
 }*palure, alure;
 
 static void
@@ -277,11 +280,18 @@ const unsigned char *ref)
 	return 0;
 }
 
+static void
+make_tid(unsigned char *tid_return, const char *prefix, unsigned short seqno)
+{
+	tid_return[0] = prefix[0] & 0xFF;
+	tid_return[1] = prefix[1] & 0xFF;
+	memcpy(tid_return + 2, &seqno, 2);
+}
+
 int alure_init(ALURE* OutD, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
 struct sockaddr &sin, alure_callback* cb)
 {
-	int rc;
 	palure A = new alure;
 	*OutD = A;
 	A->dht_debug = df;
@@ -293,6 +303,8 @@ struct sockaddr &sin, alure_callback* cb)
 	A->alure_socket = s;
 	memcpy(&A->sin, &sin, sizeof(sockaddr_in));
 
+	A->mybucket_grow_time = A->now.tv_sec;
+	A->confirm_nodes_time = A->now.tv_sec + random() % 3;
 	return 1;
 }
 
@@ -677,7 +689,7 @@ int af, const unsigned char *token, int token_len)
 int
 send_find_node(palure A, const struct sockaddr *sa, int salen,
 const unsigned char *tid, int tid_len,
-const unsigned char *target, int want, int confirm)
+const unsigned char *target, int confirm)
 {
 	b_element out, *a;
 	std::string so;
@@ -807,6 +819,58 @@ dontread:
 	debugf(A, "\n");
 }
 
+static int
+bucket_maintenance(palure A)
+{
+	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
+	if (0 == r->size())
+		return 0;
+
+	std::map<std::vector<unsigned char>, node>::iterator iter = r->begin();
+	int ir = random() % r->size();
+
+	for (int i = 0; iter != r->end(), i < ir; iter++, i++) {}
+	node* n = &iter->second;
+	if (n) {
+		unsigned char id[IDLEN];
+		alure_random_bytes(id, 20);
+
+		unsigned char tid[4];
+		debugf(A, "Sending find_node for bucket maintenance.\n");
+		make_tid(tid, "fn", 0);
+		send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
+			tid, 4, id, 0);
+		node_pinged(A, n);
+		return 1;
+	}
+	return 0;
+}
+
+static int
+neighbourhood_maintenance(palure A)
+{
+	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
+	if (0 == r->size())
+		return 0;
+
+	std::map<std::vector<unsigned char>, node>::iterator iter = r->begin();
+	int ir = random() % r->size();
+
+	for (int i = 0; iter != r->end(), i < ir; iter++, i++) {}
+	node* n = &iter->second;
+	if (n) {
+
+		unsigned char tid[4];
+		debugf(A, "Sending find_node for neighborhood maintenance.\n");
+		make_tid(tid, "fn", 0);
+		send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
+			tid, 4, A->myid,0);
+		node_pinged(A, n);
+		return 1;
+	}
+	return 0;
+}
+
 int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 	const struct sockaddr *from, int fromlen,
 	time_t *tosleep)
@@ -827,5 +891,23 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 		}
 	}
 
+	if (A->now.tv_sec >= A->confirm_nodes_time) {
+		int soon = 0;
+		soon |= bucket_maintenance(A);
+		if (!soon) {
+			if (A->mybucket_grow_time >= A->now.tv_sec - 150)
+				soon |= neighbourhood_maintenance(A);
+		}
+
+		if (soon)
+			A->confirm_nodes_time = A->now.tv_sec + 5 + random() % 20;
+		else
+			A->confirm_nodes_time = A->now.tv_sec + 60 + random() % 120;
+	}
+
+	if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {
+		A->gossip_expire_time = A->now.tv_sec;
+		expire_gossip(A);
+	}
 	return 0;
 }
