@@ -22,24 +22,24 @@ THE SOFTWARE.
 #define ALURE void*
 ///revice msg
 typedef void
-alure_callback(ALURE A, const char* topic,
+alure_callback(ALURE A, const char* topic, int topic_len,
 void *closure,
-const char* msg, size_t msglen);
+const char* msg, size_t msg_len);
 
 int alure_init(ALURE* A, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
-struct sockaddr &sin, alure_callback* cb);
+struct sockaddr &sin);
 void alure_uninit(ALURE A);
 
-void alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
-void alure_broadcast(ALURE A, const char* topic, const char* msg, int msglen);
+int alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
+void alure_broadcast(ALURE A, const char* topic, int topic_len, const char* msg, int msg_len, int step=2);
 
 ///if topic is '*' recive all message
 ///map<string topic, set<void* closuer>>
-void alure_filter_add(ALURE A, const char* topic, void *closure);
-void alure_filter_del(ALURE A, const char* topic, void *closure);
+void alure_filter_add(ALURE A, const char* topic, int topic_len, alure_callback* cb, void *closure);
+void alure_filter_del(ALURE A, const char* topic, int topic_len, void *closure);
 void alure_filter_list(ALURE A, std::list<std::string>&topic);
-void alure_filter_list(ALURE A, const char* topic, std::list<void*> &closure);
+void alure_filter_list(ALURE A, const char* topic, int topic_len, std::list<void*> &closure);
 
 int alure_periodic(ALURE A, const void *buf, size_t buflen,
 	const struct sockaddr *from, int fromlen,

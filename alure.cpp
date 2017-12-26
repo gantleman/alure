@@ -174,7 +174,6 @@ typedef struct _alure {
 
 	struct timeval now;
 	FILE *dht_debug;
-
 	struct sockaddr sin;
 
 	std::map<std::vector<unsigned char>, node> routetable;
@@ -184,11 +183,16 @@ typedef struct _alure {
 
 	time_t ping_neighbourhood_time;
 
-	std::map<std::string, std::set<void*>> filter;
+	std::map<std::string, std::map<void*, alure_callback*>> filter;
 
 	time_t confirm_nodes_time;
 	time_t mybucket_grow_time;
 }*palure, alure;
+
+static int
+node_blacklisted(palure A, const struct sockaddr *sa, int salen);
+static void
+send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int step);
 
 static void
 debugf(palure A, const char *format, ...)
@@ -238,7 +242,6 @@ void print_hex(FILE *f, const unsigned char *buf, int buflen)
 static int
 id_cmp(const unsigned char *restrict id1, const unsigned char *restrict id2)
 {
-	/* Memcmp is guaranteed to perform an unsigned comparison. */
 	return memcmp(id1, id2, IDLEN);
 }
 
@@ -290,7 +293,7 @@ make_tid(unsigned char *tid_return, const char *prefix, unsigned short seqno)
 
 int alure_init(ALURE* OutD, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
-struct sockaddr &sin, alure_callback* cb)
+struct sockaddr &sin)
 {
 	palure A = new alure;
 	*OutD = A;
@@ -320,32 +323,117 @@ void alure_uninit(ALURE iA)
 	delete A;
 }
 
-void alure_ping_node(ALURE A, const struct sockaddr *sa, int salen)
+static int
+send_wrap(palure A, const void *buf, size_t len, int flags,
+const struct sockaddr *sa, int salen)
 {
+	if (salen == 0) {
+		debugf(A, "error send salen is 0!\n");
+		abort();
+	}
+	if (node_blacklisted(A, sa, salen)) {
+		debugf(A, "Attempting to send to blacklisted node.\n");
+		errno = EPERM;
+		return -1;
+	}
+
+	return alure_send(A->alure_socket, buf, len, flags, sa, salen);
 }
 
-void alure_broadcast(ALURE A, const char* topic, const char* msg, int msglen)
+int
+send_ping(palure A, const struct sockaddr *sa, int salen,
+const unsigned char *tid, int tid_len)
 {
+	b_element out, *a;
+	std::string so;
+	b_insert(&out, "y", (unsigned char*)"q", 1);
+	b_insert(&out, "t", (unsigned char*)tid, tid_len);
+	b_insert(&out, "q", (unsigned char*)"ping", 4);
+	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insertd(&out, "a", &a);
+	b_insert(a, "id", A->myid, IDLEN);
+	b_package(&out, so);
+	return send_wrap(A, so.c_str(), so.size(), 0, sa, salen);
+}
+
+int alure_ping_node(ALURE iA, const struct sockaddr *sa, int salen)
+{
+	palure A = (palure)iA;
+	unsigned char tid[4];
+	debugf(A, "Sending ping.\n");
+	make_tid(tid, "pn", 0);
+	return send_ping(A, sa, salen, tid, 4);
+}
+
+static void
+send_msg(palure A, int step, const unsigned char * id, unsigned char* gid, const char* tp, int tplen, const char* msg, int msglen)
+{
+	unsigned char tid[4];
+	unsigned char mgid[IDLEN];
+	alure_random_bytes(mgid, IDLEN);
+
+	make_tid(tid, "mg", 0);
+	b_element out, *a;
+	std::string so;
+	b_insert(&out, "y", (unsigned char*)"q", 1);
+	b_insert(&out, "t", (unsigned char*)tid, 4);
+	b_insert(&out, "q", (unsigned char*)"msg", 8);
+	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insertd(&out, "a", &a);
+	b_insert(a, "id", A->myid, IDLEN);
+	if (gid)
+		b_insert(a, "g", (unsigned char*)gid, IDLEN);
+	 else
+		b_insert(a, "g", (unsigned char*)mgid, IDLEN);
+	b_insert(a, "n", (unsigned char*)id, IDLEN);
+	b_insert(a, "m", (unsigned char*)msg, msglen);
+	b_insert(a, "tp", (unsigned char*)tp, tplen);
+	b_insert(a, "s", (unsigned char*)&step, sizeof(int));
+	b_package(&out, so);
+
+	send_gossip_step(A, gid, so.c_str(), so.size(), step);
+}
+
+void alure_broadcast(ALURE iA, const char* topic, int topic_len, const char* msg, int msg_len, int step)
+{
+	palure A = (palure)iA;
+	send_msg(A, step, 0, 0, (char *)topic, topic_len, (char *)msg, msg_len);
 }
 
 ///if topic is '*' recive all message
 ///map<string topic, set<void* closuer>>
-void alure_filter_add(ALURE A, const char* topic, void *closure)
+void alure_filter_add(ALURE iA, const char* topic, int topic_len, alure_callback* cb, void *closure)
 {
+	palure A = (palure)iA;
+	std::string key;
+	key.append(topic, topic_len);
+	A->filter[key][closure] = cb;
 }
 
-void alure_filter_del(ALURE A, const char* topic, void *closure)
+void alure_filter_del(ALURE iA, const char* topic, int topic_len, void *closure)
 {
+	palure A = (palure)iA;
+	std::string key;
+	key.append(topic, topic_len);
+	A->filter[key].erase(closure);
 }
 
-void alure_filter_list(ALURE A, std::list<std::string>&topic)
+void alure_filter_list(ALURE iA, std::list<std::string>&topic)
 {
-
+	palure A = (palure)iA;
+	std::map<std::string, std::map<void*, alure_callback*>>::iterator iter = A->filter.begin();
+	for (; iter != A->filter.end(); iter++)
+		topic.push_back(iter->first);
 }
 
-void alure_filter_list(ALURE A, const char* topic, std::list<void*> &closure)
+void alure_filter_list(ALURE iA, const char* topic, int topic_len, std::list<void*> &closure)
 {
-
+	palure A = (palure)iA;
+	std::string key;
+	key.append(topic, topic_len);
+	std::map<void*, alure_callback*>::iterator iter = A->filter[topic].begin();
+	for (; iter != A->filter[topic].end(); iter++)
+		closure.push_back(iter->first);
 }
 
 static int
@@ -471,7 +559,7 @@ new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen
 		memcpy(n->id, id, IDLEN);
 		memcpy(&n->ss, sa, salen);
 		n->sslen = salen;
-		n->pinged = 0;
+		n->pinged = -1;
 		n->pinged_time = A->now.tv_sec;
 		return n;
 	} else {
@@ -481,23 +569,6 @@ new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen
 		n->pinged_time = 0;
 	}
 	return 0;
-}
-
-static int
-send_wrap(palure A, const void *buf, size_t len, int flags,
-const struct sockaddr *sa, int salen)
-{
-	if (salen == 0) {
-		debugf(A, "error send salen is 0!\n");
-		abort();
-	}
-	if (node_blacklisted(A, sa, salen)) {
-		debugf(A, "Attempting to send to blacklisted node.\n");
-		errno = EPERM;
-		return -1;
-	}
-
-	return alure_send(A->alure_socket, buf, len, flags, sa, salen);
 }
 
 int
@@ -528,8 +599,14 @@ is_gossip(palure A, unsigned char *gid)
 	return 1;
 }
 
+static int
+node_good(palure A, struct node *node)
+{
+	return node->pinged <= 2;
+}
+
 static void
-send_gossip_step(palure A, unsigned char *gid, const char* buf, int len)
+send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int step)
 {
 	debugf(A, "send gossip step.");
 	std::vector<unsigned char> k;
@@ -539,11 +616,48 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len)
 	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.find(k);
 	if (iterg == A->gossip.end())
 		return;
-
 	A->gossip[k] = A->now.tv_sec;
-	std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.begin();
-	for (; iter != A->routetable.end(); iter++) {
-		send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+
+	if (step <= 0) {
+		std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.begin();
+		for (; iter != A->routetable.end(); iter++) {
+			send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+		}
+	} else {
+		std::vector<unsigned char> myid;
+		int mycount = 0;
+		int ping = 0;
+		myid.resize(IDLEN);
+		memcpy(&myid[0], A->myid, IDLEN);
+		std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.lower_bound(myid);
+		int loop = 0;
+		for (; loop < step; loop++) {
+			if (iter == A->routetable.end()) {
+				iter++;
+				continue;
+			}
+			if (iter->first == myid) {
+				iter++;
+				if (mycount == 1)
+					break;
+				else {
+					mycount++;
+					continue;
+				}
+			}
+
+			if (loop + 1 >= step && !ping)
+				continue;
+
+			struct node *n = &iter->second;
+			if (node_good(A, n)) {
+				loop++;
+				send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+				if (n->pinged != -1)
+					ping = 1;
+			}
+			iter++;
+		}
 	}
 }
 
@@ -558,13 +672,6 @@ expire_gossip(palure A)
 		} else
 			iterg++;
 	}
-
-}
-
-static int
-node_good(palure A, struct node *node)
-{
-	return node->pinged <= 2;
 }
 
 static int
@@ -810,6 +917,54 @@ const struct sockaddr *from, int fromlen
 			debugf(A, "Sending closest nodes.\n");
 			send_closest_nodes(A, from, fromlen,
 				tid, tid_len, target, NULL, NULL, 0);
+		} else if (memcmp(q_return, "msg", q_len) == 0) {
+			unsigned char *gid;
+			int gid_len;
+			b_find(a, "g", &gid, gid_len);
+			if (gid_len == 0)
+				goto dontread;
+
+			unsigned char *nid;
+			int nid_len;
+			b_find(a, "n", &nid, nid_len);
+			if (nid_len == 0)
+				goto dontread;
+
+			unsigned char *m;
+			int m_len;
+			b_find(a, "m", &m, m_len);
+			if (nid_len == 0)
+				goto dontread;
+
+			int s;
+			unsigned char *cs;
+			int cs_len;
+			b_find(a, "s", &cs, cs_len);
+			if (nid_len == 0)
+				goto dontread;
+			memcpy(&s, cs, cs_len);
+
+			unsigned char *tp;
+			int tp_len;
+			b_find(a, "tp", &tp, tp_len);
+			if (nid_len == 0)
+				goto dontread;
+
+			if (!is_gossip(A, gid)) {
+				debugf(A, "message!\n");
+				std::string key;
+				key.append((char*)tp, tp_len);
+				std::map<std::string, std::map<void*, alure_callback*>>::iterator iter = A->filter.find(key);
+				if (iter != A->filter.end())
+				{
+					std::map<void*, alure_callback*>::iterator citer = iter->second.begin();
+					for (; citer != iter->second.end(); citer++)
+					{
+						citer->second(A, (char*)tp, tp_len, citer->first, (char*)m, m_len);
+					}
+				}
+			}
+			send_msg(A, s, nid, gid, (char *)tp, tp_len, (char *)m, m_len);
 		}
 	}
 

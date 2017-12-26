@@ -216,7 +216,7 @@ int main(int argc, char **argv)
     struct sockaddr_in sin;
     struct sockaddr_in6 sin6;
     struct sockaddr_storage from;
-    socklen_t fromlen, melen;
+    socklen_t fromlen;
 	struct sockaddr me;
 	FILE* dht_debug = NULL;
 
@@ -420,7 +420,7 @@ int main(int argc, char **argv)
 
 	ALURE D;
     /* Init the dht.  This sets the socket into non-blocking mode. */
-	rc = alure_init(&D, s, myid, (unsigned char*)"JC\0\0", dht_debug, me, msg_callback);
+	rc = alure_init(&D, s, myid, (unsigned char*)"JC\0\0", dht_debug, me);
     if(rc < 0) {
         perror("dht_init");
         exit(1);
