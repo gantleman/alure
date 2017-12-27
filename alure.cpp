@@ -164,6 +164,12 @@ struct node {
 	int pinged;
 };
 
+typedef struct _filter_value{
+	int id;
+	void* closure;
+	alure_callback* cb;
+}*pfilter_value, filter_value;
+
 typedef struct _alure {
 	int alure_socket;
 
@@ -183,7 +189,8 @@ typedef struct _alure {
 
 	time_t ping_neighbourhood_time;
 
-	std::map<std::string, std::map<void*, alure_callback*>> filter;
+	std::map<std::string, std::map<int, filter_value>> filter;
+	int filter_count;
 
 	time_t confirm_nodes_time;
 	time_t mybucket_grow_time;
@@ -308,6 +315,7 @@ struct sockaddr &sin)
 
 	A->mybucket_grow_time = A->now.tv_sec;
 	A->confirm_nodes_time = A->now.tv_sec + random() % 3;
+	A->filter_count = 0;
 	return 1;
 }
 
@@ -402,38 +410,54 @@ void alure_broadcast(ALURE iA, const char* topic, int topic_len, const char* msg
 
 ///if topic is '*' recive all message
 ///map<string topic, set<void* closuer>>
-void alure_filter_add(ALURE iA, const char* topic, int topic_len, alure_callback* cb, void *closure)
+int alure_filter_add(ALURE iA, const char* topic, int topic_len, alure_callback* cb, void *closure)
 {
 	palure A = (palure)iA;
 	std::string key;
 	key.append(topic, topic_len);
-	A->filter[key][closure] = cb;
+	filter_value fv;
+	fv.id = A->filter_count++;
+	fv.closure = closure;
+	fv.cb = cb;
+	A->filter[key][fv.id] = fv;
+	return fv.id;
 }
 
-void alure_filter_del(ALURE iA, const char* topic, int topic_len, void *closure)
+void* alure_filter_del(ALURE iA, const char* topic, int topic_len, int fvid)
 {
 	palure A = (palure)iA;
+	void* r = 0;
 	std::string key;
 	key.append(topic, topic_len);
-	A->filter[key].erase(closure);
+	std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.find(key);
+	if (iter!= A->filter.end()){
+		std::map<int, filter_value>::iterator fiter = iter->second.find(fvid);
+		if (fiter != iter->second.end()) {
+			r = fiter->second.closure;
+			iter->second.erase(fiter);
+			if (iter->second.empty())
+				A->filter.erase(iter);
+		}
+	}
+	return r;
 }
 
-void alure_filter_list(ALURE iA, std::list<std::string>&topic)
+void alure_filter_list(ALURE iA, std::string& out)
 {
 	palure A = (palure)iA;
-	std::map<std::string, std::map<void*, alure_callback*>>::iterator iter = A->filter.begin();
-	for (; iter != A->filter.end(); iter++)
-		topic.push_back(iter->first);
-}
+	std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.begin();
+	for (; iter != A->filter.end(); iter++) {
+		std::stringstream ss;
+		ss << "topic:" << iter->first << "\n";
+		ss << "count:" << iter->second.size();
 
-void alure_filter_list(ALURE iA, const char* topic, int topic_len, std::list<void*> &closure)
-{
-	palure A = (palure)iA;
-	std::string key;
-	key.append(topic, topic_len);
-	std::map<void*, alure_callback*>::iterator iter = A->filter[topic].begin();
-	for (; iter != A->filter[topic].end(); iter++)
-		closure.push_back(iter->first);
+		std::map<int, filter_value>::iterator fiter = iter->second.begin();
+		for (; iter != A->filter.end(); iter++) {
+			ss << "id:" << fiter->first;
+			ss << "closure" << fiter->second.closure;
+			ss << "cb" << fiter->second.cb;
+		}
+	}
 }
 
 static int
@@ -841,9 +865,6 @@ const struct sockaddr *from, int fromlen
 			debugf(A, "Broken node truncates transaction ids: ");
 			debug_printable(A, (unsigned char *)buf, buflen);
 			debugf(A, "\n");
-			/* This is really annoying, as it means that we will
-			time-out all our searches that go through this node.
-			Kill it. */
 			blacklist_node(A, id, from, fromlen);
 			return;
 		}
@@ -954,13 +975,19 @@ const struct sockaddr *from, int fromlen
 				debugf(A, "message!\n");
 				std::string key;
 				key.append((char*)tp, tp_len);
-				std::map<std::string, std::map<void*, alure_callback*>>::iterator iter = A->filter.find(key);
-				if (iter != A->filter.end())
-				{
-					std::map<void*, alure_callback*>::iterator citer = iter->second.begin();
-					for (; citer != iter->second.end(); citer++)
-					{
-						citer->second(A, (char*)tp, tp_len, citer->first, (char*)m, m_len);
+				std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.find("*");
+				if (iter != A->filter.end()) {
+					std::map<int, filter_value>::iterator citer = iter->second.begin();
+					for (; citer != iter->second.end(); citer++) {
+						citer->second.cb(A, (char*)tp, tp_len, citer->second.closure, (char*)m, m_len);
+					}
+				}
+
+				iter = A->filter.find(key);
+				if (iter != A->filter.end()) {
+					std::map<int, filter_value>::iterator citer = iter->second.begin();;
+					for (; citer != iter->second.end(); citer++) {
+						citer->second.cb(A, (char*)tp, tp_len, citer->second.closure, (char*)m, m_len);
 					}
 				}
 			}
@@ -1031,7 +1058,6 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 	time_t *tosleep)
 {
 	palure A = (palure)iA;
-	///Time first is fixed in one second without considering optimization
 	*tosleep = 1;
 	dht_gettimeofday(&A->now, NULL);
 

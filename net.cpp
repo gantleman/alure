@@ -1,5 +1,4 @@
 /*
-Copyright (c) 2009-2011 by Juliusz Chroboczek
 Copyright (c) 2009-2011 by shuo sun(dds_sun@hotmail.com)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -32,7 +31,7 @@ THE SOFTWARE.
 #include "md5.h"
 #include "sha1.h"
 #include <list>
-
+#include "cJSON.h"
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/time.h>
@@ -148,13 +147,9 @@ void print_hex(FILE *f, const unsigned char *buf, int buflen)
 		fprintf(f, "%02x", buf[i]);
 }
 
-/* The call-back function is called by the DHT whenever something
-   interesting happens.  Right now, it only happens when we get a new value or
-   when a search completes, but this may be extended in future versions. */
 static void
-msg_callback(ALURE A, const char* topic,
-void *closure,
-const char* msg, size_t msglen)
+msg_callback(ALURE A, const char* topic, int topic_len,
+void *closure, const char* msg, size_t msglen)
 {
 	std::string value;
 	value.append((char*)msg, msglen);
@@ -199,8 +194,13 @@ int is_martian(const struct sockaddr *sa)
 	}
 }
 
-static char buf[4096];
+typedef struct _param
+{
+	struct sockaddr_storage from;
+	socklen_t fromlen;
+}*pparam, param;
 
+static char buf[4096];
 int main(int argc, char **argv)
 {
 	FILE* fd;
@@ -221,8 +221,6 @@ int main(int argc, char **argv)
 	FILE* dht_debug = NULL;
 
 #ifdef _WIN32
-
-	// Load Winsock
 	int retval;
 	WSADATA wsaData;
 	if ((retval = WSAStartup(MAKEWORD(2, 2), &wsaData)) != 0)
@@ -282,9 +280,6 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Ids need to be distributed evenly, so you cannot just use your
-       bittorrent id.  Either generate it randomly, or take the SHA-1 of
-       something. */
 	fd = fopen(id_file, "r");
 	if (fd > 0) {
 		rc = fread(myid, 1, 20, fd);
@@ -355,14 +350,8 @@ int main(int argc, char **argv)
 		exit(0);
 	}
 
-    /* If you set dht_debug to a stream, every action taken by the DHT will
-       be logged. */
     if(!quiet)
         dht_debug = stdout;
-
-    /* We need an IPv4 and an IPv6 socket, bound to a stable port.  Rumour
-       has it that uTorrent works better when it is the same as your
-       Bittorrent port. */
 
 	if (!ipv6) {
         s = socket(PF_INET, SOCK_DGRAM, 0);
@@ -380,7 +369,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "Eek!");
         exit(1);
     }
-
 
     if(s >= 0 && ipv6 == 0) {
         sin.sin_port = htons(port);
@@ -400,10 +388,6 @@ int main(int argc, char **argv)
             exit(1);
         }
 
-        /* BEP-32 mandates that we should bind this socket to one of our
-           global IPv6 addresses.  In this simple example, this only
-           happens if the user used the -b flag. */
-
         sin6.sin6_port = htons(port);
         rc = bind(s, (struct sockaddr*)&sin6, sizeof(sin6));
         if(rc < 0) {
@@ -418,25 +402,15 @@ int main(int argc, char **argv)
 			return 0;
 	}
 
-	ALURE D;
-    /* Init the dht.  This sets the socket into non-blocking mode. */
-	rc = alure_init(&D, s, myid, (unsigned char*)"JC\0\0", dht_debug, me);
+	ALURE A;
+	rc = alure_init(&A, s, myid, (unsigned char*)"JC\0\0", dht_debug, me);
     if(rc < 0) {
         perror("dht_init");
         exit(1);
     }
 
-    /* For bootstrapping, we need an initial list of nodes.  This could be
-       hard-wired, but can also be obtained from the nodes key of a torrent
-       file, or from the PORT bittorrent message.
-
-       Dht_ping_node is the brutal way of bootstrapping -- it actually
-       sends a message to the peer.  If you're going to bootstrap from
-       a massive number of nodes (for example because you're restoring from
-       a dump) and you already know their ids, it's better to use
-       dht_insert_node.  If the ids are incorrect, the DHT will recover. */
     for(i = 0; i < num_bootstrap_nodes; i++) {
-		alure_ping_node(D, (struct sockaddr*)&bootstrap_nodes[i],
+		alure_ping_node(A, (struct sockaddr*)&bootstrap_nodes[i],
                       sizeof(bootstrap_nodes[i]));
         sleep(random() % 3);
     }
@@ -472,40 +446,104 @@ int main(int argc, char **argv)
 			if (strncmp(buf, CCMD, SCCMD) != 0)
 			{
 				buf[rc] = '\0';
-				rc = alure_periodic(D, buf, rc, (struct sockaddr*)&from, fromlen,
-					&tosleep);
-			}
-			else
-			{
-				///must from local
+				rc = alure_periodic(A, buf, rc, (struct sockaddr*)&from, fromlen, &tosleep);
+			} else {
 				if (safe && 1 != is_martian((struct sockaddr*)&from))
 					continue;
-
-				/* This is how you trigger a search for a torrent hash.  If port
-				(the second argument) is non-zero, it also performs an announce.
-				Since peers expire announced data after 30 minutes, it's a good
-				idea to reannounce every 28 minutes or so. */
 				char* pcmd = buf + SCCMD;
-				if (pcmd[0] == 's') {
-					char hs[256] = { 0 };
-					char sv[256] = { 0 };
-					sscanf(&pcmd[2], "%s %s", &hs, &sv);
+				cJSON *root_json = cJSON_Parse(pcmd);
+				if (NULL != root_json) {
+					cJSON *cmd_json = cJSON_GetObjectItem(root_json, "cmd");
+					cJSON *tid_json = cJSON_GetObjectItem(root_json, "tid");
+					if (cmd_json != NULL) {
+						if (cmd_json->string == "m")
+						{
+							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
+							if (data_json != NULL) {
+								cJSON *topic_json = cJSON_GetObjectItem(data_json, "topic");
+								cJSON *msg_json = cJSON_GetObjectItem(data_json, "msg");
+								if (topic_json != NULL && msg_json != NULL) {
+									alure_broadcast(A, topic_json->valuestring, strlen(topic_json->valuestring)
+										, msg_json->valuestring, strlen(msg_json->valuestring));
+									printf("broadcast topic %s %s\n", topic_json->valuestring, msg_json->valuestring);
 
-					SHA1_CONTEXT sc;
-					sha1_init(&sc);
-					sha1_write(&sc, (unsigned char*)hs, strlen(hs));
-					sha1_final(&sc);
+									///r
+									cJSON *root_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									char *o = cJSON_Print(root_json);
+									int len = strlen(o);
 
-					printf("search key:%s value:%s hash:", hs, sv);
-					print_hex(stdout, (unsigned char*)buf, 20);
-					printf("\n");
+									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
+									free(o);
+								}
+							}
+						} else if (cmd_json->string == "r") {
+							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
+							if (data_json) {
+								cJSON *topic_json = cJSON_GetObjectItem(data_json, "topic");
+								if (topic_json) {
+									pparam pp = new param;
+									memcpy(&pp->from, &from, fromlen);
+									pp->fromlen = fromlen;
+									int id = alure_filter_add(A, topic_json->valuestring, strlen(topic_json->valuestring), msg_callback, (void*)pp);
+									printf("add topic %d\n", id);
+									///r
+									cJSON *root_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									cJSON *data_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(root_json, "data", data_json);
+									cJSON_AddItemToObject(data_json, "id", cJSON_CreateNumber(id));
+									char *o = cJSON_Print(root_json);
+									int len = strlen(o);
 
-					int len = strlen(sv);
+									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
+									free(o);
+								}
+							}
+						} else if (cmd_json->string == "d") {
+							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
+							if (data_json != NULL) {
+								cJSON *id_json = cJSON_GetObjectItem(data_json, "id");
+								cJSON *topic_json = cJSON_GetObjectItem(data_json, "topic");
+								if (id_json && topic_json) {
+									pparam pp = (pparam)alure_filter_del(A, topic_json->valuestring, strlen(topic_json->valuestring), id_json->valueint);
+									if (pp){
+										delete pp;
+									}
+									printf("delete topic %d\n", id_json->valueint);
+									///r
+									cJSON *root_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									char *o = cJSON_Print(root_json);
+									int len = strlen(o);
 
+									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
+									free(o);
+								}
+							}
+						} else if (cmd_json->string == "l") {
+							std::string out;
+							alure_filter_list(A, out);
+							printf("%s\n", out.c_str());
+							///r
+							cJSON *root_json = cJSON_CreateObject();
+							cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
+							cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+							char *o = cJSON_Print(root_json);
+							int len = strlen(o);
+
+							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
+							free(o);
+						}
+					}
 				}
+
 			}
         } else {
-			rc = alure_periodic(D, NULL, 0, NULL, 0, &tosleep);
+			rc = alure_periodic(A, NULL, 0, NULL, 0, &tosleep);
         }
         if(rc < 0) {
             if(errno == EINTR) {
@@ -519,11 +557,11 @@ int main(int argc, char **argv)
         }
     }
 
-	alure_uninit(D);
+	alure_uninit(A);
     return 0;
     
  usage:
-    printf("Usage: dht-example [-q] [-4] [-6] [-b address] [-p port] [-i filename] [-o filename]");
+    printf("Usage: dht-example [-q] [-6] [-b address] [-p port] [-i filename] [-o filename]");
     exit(1);
 }
 

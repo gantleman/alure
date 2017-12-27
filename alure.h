@@ -21,10 +21,7 @@ THE SOFTWARE.
 */
 #define ALURE void*
 ///revice msg
-typedef void
-alure_callback(ALURE A, const char* topic, int topic_len,
-void *closure,
-const char* msg, size_t msg_len);
+typedef void alure_callback(ALURE A, const char* topic, int topic_len, void *closure, const char* msg, size_t msg_len);
 
 int alure_init(ALURE* A, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
@@ -36,10 +33,9 @@ void alure_broadcast(ALURE A, const char* topic, int topic_len, const char* msg,
 
 ///if topic is '*' recive all message
 ///map<string topic, set<void* closuer>>
-void alure_filter_add(ALURE A, const char* topic, int topic_len, alure_callback* cb, void *closure);
-void alure_filter_del(ALURE A, const char* topic, int topic_len, void *closure);
-void alure_filter_list(ALURE A, std::list<std::string>&topic);
-void alure_filter_list(ALURE A, const char* topic, int topic_len, std::list<void*> &closure);
+int alure_filter_add(ALURE A, const char* topic, int topic_len, alure_callback* cb, void *closure);
+void* alure_filter_del(ALURE A, const char* topic, int topic_len, int fvid);
+void alure_filter_list(ALURE A, std::string& out);
 
 int alure_periodic(ALURE A, const void *buf, size_t buflen,
 	const struct sockaddr *from, int fromlen,

@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
+#include "cJSON.h"
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/time.h>
@@ -36,12 +37,11 @@ main(int argc, char **argv)
 {
     int s = -1, s6 = -1, port = 0;
     int opt;
-    int ipv4 = 1, ipv6 = 1;
+    int ipv6 = 0;
     struct sockaddr_in sin;
     struct sockaddr_in6 sin6;
 
 #ifdef _WIN32
-
 	// Load Winsock
 	int retval;
 	WSADATA wsaData;
@@ -64,8 +64,7 @@ main(int argc, char **argv)
             break;
 
         switch(opt) {
-        case '4': ipv6 = 0; break;
-        case '6': ipv4 = 0; break;
+        case '6': ipv6 = 1; break;
         case 'b': {
             char buf[16];
             int rc;
@@ -90,70 +89,123 @@ main(int argc, char **argv)
             goto usage;
         }
     }
-
-    /* We need an IPv4 and an IPv6 socket, bound to a stable port.  Rumour
-       has it that uTorrent works better when it is the same as your
-       Bittorrent port. */
-
-    if(ipv4) {
+	if (!ipv6) {
         s = socket(PF_INET, SOCK_DGRAM, 0);
         if(s < 0) {
             perror("socket(IPv4)");
         }
-    }
-
-    if(ipv6) {
-        s6 = socket(PF_INET6, SOCK_DGRAM, 0);
-        if(s6 < 0) {
+    }else if(ipv6) {
+        s = socket(PF_INET6, SOCK_DGRAM, 0);
+        if(s < 0) {
             perror("socket(IPv6)");
         }
     }
 
-    if(s < 0 && s6 < 0) {
+    if(s < 0) {
         fprintf(stderr, "Eek!");
         exit(1);
     }
 
 
-    if(s >= 0) {
+	if (!ipv6) {
         sin.sin_port = htons(port);
-    }
-
-    if(s6 >= 0) {
+	} else if (ipv6) {
         int rc;
         int val = 1;
 
-        rc = setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY,
+        rc = setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
                         (char *)&val, sizeof(val));
         if(rc < 0) {
             perror("setsockopt(IPV6_V6ONLY)");
             exit(1);
         }
-
-        /* BEP-32 mandates that we should bind this socket to one of our
-           global IPv6 addresses.  In this simple example, this only
-           happens if the user used the -b flag. */
-
         sin6.sin6_port = htons(port);
     }
 
-
+	int tid = 0;
 	while (1) {
-		gets(pbuf);
+		char in[4096] = { 0 };
+		gets(in);
+		if (in[0] == 'm') {
+			char c[2] = {0};
+			char topic[512] = {0};
+			char msg[512] = {0};
+			char stid[256] = {0};
+			sscanf(in, "%1s %[^ ] %[^ ]", c, topic, msg);
 
-		if (s >= 0)
+			cJSON *root_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString(c));
+			sprintf(stid, "%s%d", c, tid++);
+			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
+			cJSON *data_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "data", data_json);
+			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
+			cJSON_AddItemToObject(data_json, "msg", cJSON_CreateString(msg));
+			char *out = cJSON_Print(root_json);
+			int len = strlen(out);
+			memcpy(pbuf, out, len);
+			free(out);
+		}else if (in[0] == 'r') {
+			char c[2] = { 0 };
+			char topic[512] = { 0 };
+			char msg[512] = { 0 };
+			char stid[256] = { 0 };
+			sscanf(in, "%1s %[^ ] %[^ ]", c, topic);
+
+			cJSON *root_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString(c));
+			sprintf(stid, "%s%d", c, tid++);
+			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
+			cJSON *data_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "data", data_json);
+			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
+			char *out = cJSON_Print(root_json);
+			int len = strlen(out);
+			memcpy(pbuf, out, len);
+			free(out);
+		} else if (in[0] == 'd') {
+			char c[2] = { 0 };
+			int id;
+			char msg[512] = { 0 };
+			char stid[256] = { 0 };
+			sscanf(in, "%1s %d", c, &id);
+
+			cJSON *root_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString(c));
+			sprintf(stid, "%s%d", c, tid++);
+			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
+			cJSON *data_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "data", data_json);
+			cJSON_AddItemToObject(data_json, "id", cJSON_CreateNumber(id));
+			char *out = cJSON_Print(root_json);
+			int len = strlen(out);
+			memcpy(pbuf, out, len);
+			free(out);
+		} else if (in[0] == 'l') {
+			char stid[256] = { 0 };
+			cJSON *root_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("l"));
+			sprintf(stid, "l%d", tid++);
+			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
+			char *out = cJSON_Print(root_json);
+			int len = strlen(out);
+			memcpy(pbuf, out, len);
+			free(out);
+		} else
+			continue;
+
+		if (!ipv6)
 		{
 			sendto(s, buf, strlen(buf)+1, 0, (struct sockaddr*)&sin, sizeof(sin));
-		}
-		if (s6 >= 0)
+		} else if (ipv6)
 		{
-			sendto(s6, buf, strlen(buf)+1, 0, (struct sockaddr*)&sin6, sizeof(sin6));
+			sendto(s, buf, strlen(buf)+1, 0, (struct sockaddr*)&sin6, sizeof(sin6));
 		}
 		
 	}
     
  usage:
-    printf("Usage: client [-4] [-6] [-b address] [-p port]\n");
+    printf("Usage: client [-6] [-b address] [-p port]\n");
     exit(1);
 }
 
