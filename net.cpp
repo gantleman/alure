@@ -147,13 +147,33 @@ void print_hex(FILE *f, const unsigned char *buf, int buflen)
 		fprintf(f, "%02x", buf[i]);
 }
 
+typedef struct _param
+{
+	int s;
+	struct sockaddr_storage from;
+	socklen_t fromlen;
+}*pparam, param;
+
 static void
 msg_callback(ALURE A, const char* topic, int topic_len,
 void *closure, const char* msg, size_t msglen)
 {
+	pparam pp = (pparam)closure;
 	std::string value;
 	value.append((char*)msg, msglen);
-	printf("%s Received %s, %d\n", topic, value.c_str(), msglen);
+	printf("%s Received %s, %d\n",  topic, value.c_str(), msglen);
+
+	cJSON *root_json = cJSON_CreateObject();
+	cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("rm"));
+	cJSON *data_json = cJSON_CreateObject();
+	cJSON_AddItemToObject(root_json, "data", data_json);
+	cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
+	cJSON_AddItemToObject(data_json, "msg", cJSON_CreateString(msg));
+	char *o = cJSON_Print(root_json);
+	int len = strlen(o);
+
+	sendto(pp->s, o, len, 0, (struct sockaddr*)&pp->from, pp->fromlen);
+	free(o);
        
 }
 
@@ -193,12 +213,6 @@ int is_martian(const struct sockaddr *sa)
 		return 0;
 	}
 }
-
-typedef struct _param
-{
-	struct sockaddr_storage from;
-	socklen_t fromlen;
-}*pparam, param;
 
 static char buf[4096];
 int main(int argc, char **argv)
@@ -486,6 +500,7 @@ int main(int argc, char **argv)
 									pparam pp = new param;
 									memcpy(&pp->from, &from, fromlen);
 									pp->fromlen = fromlen;
+									pp->s = s;
 									int id = alure_filter_add(A, topic_json->valuestring, strlen(topic_json->valuestring), msg_callback, (void*)pp);
 									printf("add topic %d\n", id);
 									///r
