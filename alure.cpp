@@ -583,7 +583,7 @@ new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen
 		memcpy(n->id, id, IDLEN);
 		memcpy(&n->ss, sa, salen);
 		n->sslen = salen;
-		n->pinged = -1;
+		n->pinged = 0;
 		n->pinged_time = A->now.tv_sec;
 		return n;
 	} else {
@@ -677,8 +677,6 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 			if (node_good(A, n)) {
 				loop++;
 				send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
-				if (n->pinged != -1)
-					ping = 1;
 			}
 			iter++;
 		}
