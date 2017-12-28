@@ -53,10 +53,6 @@ THE SOFTWARE.
 #endif
 
 #include "alure.h"
-
-#define CCMD "[control]"
-#define SCCMD  sizeof(CCMD) - 1
-
 #if !defined(_WIN32) || defined(__MINGW32__)
 #define dht_gettimeofday(_ts, _tz) gettimeofday((_ts), (_tz))
 #else
@@ -457,14 +453,14 @@ int main(int argc, char **argv)
         }
 
         if(rc > 0) {
-			if (strncmp(buf, CCMD, SCCMD) != 0)
+			if (strncmp(buf, "{\n\t", 3) != 0)
 			{
 				buf[rc] = '\0';
 				rc = alure_periodic(A, buf, rc, (struct sockaddr*)&from, fromlen, &tosleep);
 			} else {
 				if (safe && 1 != is_martian((struct sockaddr*)&from))
 					continue;
-				char* pcmd = buf + SCCMD;
+				char* pcmd = buf;
 				cJSON *root_json = cJSON_Parse(pcmd);
 				if (NULL != root_json) {
 					cJSON *cmd_json = cJSON_GetObjectItem(root_json, "cmd");

@@ -27,11 +27,7 @@
 #include "getopt.h"
 #endif
 
-#define CCMD "[control]"
-#define SCCMD  sizeof(CCMD) - 1
-static char buf[4096] = { CCMD };
-static char* pbuf = buf + SCCMD;
-
+static char pbuf[4096];
 int
 main(int argc, char **argv)
 {
@@ -126,6 +122,8 @@ main(int argc, char **argv)
 	while (1) {
 		char in[4096] = { 0 };
 		gets(in);
+		int len = 0;
+		char *out;
 		if (in[0] == 'm') {
 			char c[2] = {0};
 			char topic[512] = {0};
@@ -141,16 +139,13 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(root_json, "data", data_json);
 			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
 			cJSON_AddItemToObject(data_json, "msg", cJSON_CreateString(msg));
-			char *out = cJSON_Print(root_json);
-			int len = strlen(out);
-			memcpy(pbuf, out, len);
-			free(out);
+			out = cJSON_Print(root_json);
 		}else if (in[0] == 'r') {
 			char c[2] = { 0 };
 			char topic[512] = { 0 };
 			char msg[512] = { 0 };
 			char stid[256] = { 0 };
-			sscanf(in, "%1s %[^ ] %[^ ]", c, topic);
+			sscanf(in, "%1s %[^ ]", c, topic);
 
 			cJSON *root_json = cJSON_CreateObject();
 			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString(c));
@@ -159,16 +154,15 @@ main(int argc, char **argv)
 			cJSON *data_json = cJSON_CreateObject();
 			cJSON_AddItemToObject(root_json, "data", data_json);
 			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
-			char *out = cJSON_Print(root_json);
-			int len = strlen(out);
-			memcpy(pbuf, out, len);
-			free(out);
+			out = cJSON_Print(root_json);
+			len = strlen(out);
 		} else if (in[0] == 'd') {
 			char c[2] = { 0 };
 			int id;
+			char topic[512] = { 0 };
 			char msg[512] = { 0 };
 			char stid[256] = { 0 };
-			sscanf(in, "%1s %d", c, &id);
+			sscanf(in, "%1s %[^ ] %d", c, topic, &id);
 
 			cJSON *root_json = cJSON_CreateObject();
 			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString(c));
@@ -176,30 +170,31 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
 			cJSON *data_json = cJSON_CreateObject();
 			cJSON_AddItemToObject(root_json, "data", data_json);
+			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
 			cJSON_AddItemToObject(data_json, "id", cJSON_CreateNumber(id));
-			char *out = cJSON_Print(root_json);
-			int len = strlen(out);
-			memcpy(pbuf, out, len);
-			free(out);
+			out = cJSON_Print(root_json);
+			len = strlen(out);
 		} else if (in[0] == 'l') {
 			char stid[256] = { 0 };
 			cJSON *root_json = cJSON_CreateObject();
 			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("l"));
 			sprintf(stid, "l%d", tid++);
 			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
-			char *out = cJSON_Print(root_json);
-			int len = strlen(out);
-			memcpy(pbuf, out, len);
-			free(out);
+			out = cJSON_Print(root_json);
+			len = strlen(out);
 		} else
 			continue;
 
 		if (!ipv6)
 		{
-			sendto(s, buf, strlen(buf)+1, 0, (struct sockaddr*)&sin, sizeof(sin));
+			len = strlen(out);
+			sendto(s, out, len + 1, 0, (struct sockaddr*)&sin, sizeof(sin));
+			free(out);
 		} else if (ipv6)
 		{
-			sendto(s, buf, strlen(buf)+1, 0, (struct sockaddr*)&sin6, sizeof(sin6));
+			len = strlen(out);
+			sendto(s, out, len + 1, 0, (struct sockaddr*)&sin6, sizeof(sin6));
+			free(out);
 		}
 		
 	}
