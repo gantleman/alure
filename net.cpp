@@ -548,6 +548,17 @@ int main(int argc, char **argv)
 
 							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 							free(o);
+						} else if (cmd_json->string == "p") {
+							alure_dump_tables(A, stdout);
+							///r
+							cJSON *root_json = cJSON_CreateObject();
+							cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
+							cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+							char *o = cJSON_Print(root_json);
+							int len = strlen(o);
+
+							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
+							free(o);
 						}
 					}
 				}

@@ -1203,3 +1203,53 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 	}
 	return 0;
 }
+
+static void
+dump_bucket(palure A, FILE *f)
+{
+	std::map<std::vector<unsigned char>, node>* b = &A->routetable;
+	fprintf(f, "Bucket ");
+	std::map<std::vector<unsigned char>, node>::iterator iter = b->begin();
+	for (; iter != b->end();iter++)
+	{
+		char buf[512];
+		unsigned short port;
+		fprintf(f, "    Node ");
+		print_hex(f, iter->second.id, 20);
+		if (iter->second.ss.sa_family == AF_INET) {
+			struct sockaddr_in *sin = (struct sockaddr_in*)&iter->second.ss;
+			inet_ntop(AF_INET, &sin->sin_addr, buf, 512);
+			port = ntohs(sin->sin_port);
+		} else if (iter->second.ss.sa_family == AF_INET6) {
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6*)&iter->second.ss;
+			inet_ntop(AF_INET6, &sin6->sin6_addr, buf, 512);
+			port = ntohs(sin6->sin6_port);
+		} else {
+			snprintf(buf, 512, "unknown(%d)", iter->second.ss.sa_family);
+			port = 0;
+		}
+
+		if (iter->second.ss.sa_family == AF_INET6)
+			fprintf(f, " [%s]:%d ", buf, port);
+		else
+			fprintf(f, " %s:%d ", buf, port);
+		if (iter->second.pinged)
+			fprintf(f, " (%d)", iter->second.pinged);
+		if (node_good(A, &iter->second))
+			fprintf(f, " (good)");
+		fprintf(f, "\n");
+	}
+}
+
+void alure_dump_tables(ALURE iA, FILE *f)
+{
+	palure A = (palure)iA;
+
+	fprintf(f, "My id ");
+	print_hex(f, A->myid, 20);
+	fprintf(f, "\n");
+
+	dump_bucket(A, f);
+	fprintf(f, "\n\n");
+	fflush(f);
+}

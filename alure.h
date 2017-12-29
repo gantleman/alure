@@ -42,6 +42,9 @@ int alure_periodic(ALURE A, const void *buf, size_t buflen,
 	const struct sockaddr *from, int fromlen,
 	time_t *tosleep);
 
+void alure_dump_tables(ALURE A, FILE *f);
+
+///interface
 void alure_random_bytes(void *buf, size_t size);
 
 void alure_hash(void *hash_return, int hash_size,

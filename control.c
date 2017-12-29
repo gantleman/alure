@@ -182,6 +182,14 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
 			out = cJSON_Print(root_json);
 			len = strlen(out);
+		} else if (in[0] == 'p') {
+			char stid[256] = { 0 };
+			cJSON *root_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("p"));
+			sprintf(stid, "l%d", tid++);
+			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
+			out = cJSON_Print(root_json);
+			len = strlen(out);
 		} else
 			continue;
 
