@@ -33,16 +33,13 @@ void b_parsed(const char* buf, int len, int &cur, b_element& out)
 		if(cur++ >= len)
 			break;
 		
-		if (buf[cur] == 'd'){
-			///����Ƕ��			
+		if (buf[cur] == 'd'){		
 			b_parsed(buf, len, cur, (*p)[key]);
 			kv = 0;
 			key.clear();
 		}else if (buf[cur] == 'e'){
-			///����Ƕ��
 			return;
-		}else if (buf[cur] == 'l'){
-			///����Ƕ��			
+		}else if (buf[cur] == 'l'){		
 			b_parsel(buf, len, cur, (*p)[key]);
 			kv = 0;
 			key.clear();
@@ -54,7 +51,6 @@ void b_parsed(const char* buf, int len, int &cur, b_element& out)
 				key.append((buf + cur), nlen);
 				kv = 1;	
 			}else{
-				///�������ݵ�������
 				(*p)[key].buf.resize(nlen);
 				memcpy(&(*p)[key].buf[0], (buf + cur), nlen);
 				(*p)[key].key = key;
@@ -72,7 +68,6 @@ void b_parsed(const char* buf, int len, int &cur, b_element& out)
 
 				if (buf[begin + ++nlen] == 'e'){
 					(*p)[key].type = 3;
-					///�������ݵ�������
 					(*p)[key].buf.resize(nlen);
 					memcpy(&(*p)[key].buf[0], (buf + begin), nlen);
 					(*p)[key].key = key;
@@ -104,22 +99,17 @@ void b_parsel(const char* buf, int len, int &cur, b_element& out)
 		if (cur++ >= len)
 			break;
 		if (buf[cur] == 'd'){
-			///����Ƕ��
 			b_parsed(buf, len, cur, (*p).back());
 		}else if (buf[cur] == 'e'){
-			///����Ƕ��
 			return;
-		}else if (buf[cur] == 'l'){
-			///����Ƕ��			
+		}else if (buf[cur] == 'l'){		
 			b_parsel(buf, len, cur, (*p).back());
 		}
 		else if (buf[cur] == ':'){
-			///�������ݵ�������
 			int nlen;
 			cur++;
 			nlen = atoi(slen.c_str());
 
-			///�����ֵ
 			b_element t;
 			(*p).push_back(t);
 			
@@ -137,7 +127,6 @@ void b_parsel(const char* buf, int len, int &cur, b_element& out)
 					return;
 
 				if (buf[begin + ++nlen] == 'e'){
-					///�����ֵ
 					b_element t;
 					(*p).push_back(t);
 

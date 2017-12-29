@@ -144,6 +144,7 @@ const void *needle, size_t needlelen)
 #define MAX(x, y) ((x) >= (y) ? (x) : (y))
 #define MIN(x, y) ((x) <= (y) ? (x) : (y))
 
+#define MAX_LIMTER 500
 #define IDLEN 20
 static const unsigned char zeroes[IDLEN] = { 0 };
 static const unsigned char ones[IDLEN] = {
@@ -194,6 +195,8 @@ typedef struct _alure {
 
 	time_t confirm_nodes_time;
 	time_t mybucket_grow_time;
+	time_t mybucket_expire_time;
+	time_t mybucket_limter_time;
 }*palure, alure;
 
 static int
@@ -313,6 +316,8 @@ struct sockaddr &sin)
 	A->alure_socket = s;
 	memcpy(&A->sin, &sin, sizeof(sockaddr_in));
 
+	A->mybucket_limter_time = A->now.tv_sec;
+	A->mybucket_expire_time = A->now.tv_sec;
 	A->mybucket_grow_time = A->now.tv_sec;
 	A->confirm_nodes_time = A->now.tv_sec + random() % 3;
 	A->filter_count = 0;
@@ -491,6 +496,7 @@ is_martian(palure A, const struct sockaddr *sa)
 	}
 }
 
+///find other node in p2pnet
 static struct node *
 find_node(palure A, const unsigned char *id, int af)
 {
@@ -563,7 +569,7 @@ node_ponged(palure A, const unsigned char *id, const struct sockaddr *sa, int sa
 }
 
 static struct node *
-new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen)
+new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen, int available=1)
 {
 	if (id_cmp(id, A->myid) == 0)
 		return NULL;
@@ -583,7 +589,10 @@ new_node(palure A, const unsigned char *id, const struct sockaddr *sa, int salen
 		memcpy(n->id, id, IDLEN);
 		memcpy(&n->ss, sa, salen);
 		n->sslen = salen;
-		n->pinged = 0;
+		if (available)
+			n->pinged = 0;
+		else
+			n->pinged = 4;
 		n->pinged_time = A->now.tv_sec;
 		return n;
 	} else {
@@ -653,14 +662,16 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 		int ping = 0;
 		myid.resize(IDLEN);
 		memcpy(&myid[0], A->myid, IDLEN);
-		std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.lower_bound(myid);
+		std::map<std::vector<unsigned char>, node>::iterator iter, fiter = A->routetable.lower_bound(myid);
+		iter = fiter;
 		int loop = 0;
 		for (; loop < step; loop++) {
 			if (iter == A->routetable.end()) {
 				iter++;
 				continue;
 			}
-			if (iter->first == myid) {
+
+			if (iter == fiter) {
 				iter++;
 				if (mycount == 1)
 					break;
@@ -766,7 +777,6 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
 		}
-
 	}
 	return numnodes;
 }
@@ -890,7 +900,7 @@ const struct sockaddr *from, int fromlen
 					sin.sin_family = AF_INET;
 					memcpy(&sin.sin_addr, ni + IDLEN, 4);
 					memcpy(&sin.sin_port, ni + 24, 2);
-					new_node(A, ni, (struct sockaddr*)&sin, sizeof(sin));
+					new_node(A, ni, (struct sockaddr*)&sin, sizeof(sin), 0);
 				}
 				for (i = 0; i < nodes6_len / 38; i++) {
 					unsigned char *ni = nodes6 + i * 38;
@@ -901,7 +911,7 @@ const struct sockaddr *from, int fromlen
 					sin6.sin6_family = AF_INET6;
 					memcpy(&sin6.sin6_addr, ni + IDLEN, 16);
 					memcpy(&sin6.sin6_port, ni + 36, 2);
-					new_node(A, ni, (struct sockaddr*)&sin6, sizeof(sin6));
+					new_node(A, ni, (struct sockaddr*)&sin6, sizeof(sin6), 0);
 				}
 			}
 		}
@@ -1006,10 +1016,11 @@ bucket_maintenance(palure A)
 	if (0 == r->size())
 		return 0;
 
-	std::map<std::vector<unsigned char>, node>::iterator iter = r->begin();
-	int ir = random() % r->size();
+	std::vector<unsigned char> key;
+	key.resize(IDLEN);
+	alure_random_bytes(&key[0], IDLEN);
 
-	for (int i = 0; iter != r->end(), i < ir; iter++, i++) {}
+	std::map<std::vector<unsigned char>, node>::iterator iter = r->lower_bound(key);
 	node* n = &iter->second;
 	if (n) {
 		unsigned char id[IDLEN];
@@ -1026,25 +1037,121 @@ bucket_maintenance(palure A)
 	return 0;
 }
 
+static void
+limter_buckets(palure A)
+{
+	//delete far node
+	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
+	if (r->size() > MAX_LIMTER){
+		std::vector<unsigned char> key;
+		key.resize(IDLEN);
+		memcpy(&key[0], A->myid, IDLEN);
+
+		std::map<std::vector<unsigned char>, node>::iterator iter, fiter = r->lower_bound(key);
+		iter = fiter;
+		for (int i = 0; i < MAX_LIMTER / 2;) {
+			if (iter == r->end()) {
+				iter++;
+				continue;
+			}
+			i++;
+			iter++;
+		}
+		int d = r->size() - MAX_LIMTER;
+		for (int i = 0; i < d;){
+			if (iter == r->end()) {
+				iter++;
+				continue;
+			}
+			iter = r->erase(iter);
+			i++;
+		}
+	}
+}
+static int
+expire_buckets(palure A)
+{
+	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
+	if (0 == r->size())
+		return 0;
+
+	std::vector<unsigned char> key;
+	key.resize(IDLEN);
+	alure_random_bytes(&key[0], IDLEN);
+
+	std::map<std::vector<unsigned char>, node>::iterator iter, fiter = r->lower_bound(key);
+	int ir = random() % (r->size() > 50 ? 50 : r->size());
+	int mycount = 0;
+	iter = fiter;
+
+	for (int i = 0; i < ir; i++) {
+		if (iter == r->end()) {
+			iter++;
+			continue;
+		}
+
+		if (iter == fiter) {
+			iter++;
+			if (mycount == 1)
+				break;
+			else {
+				mycount++;
+				continue;
+			}
+		}
+		if (iter->second.pinged >= 4 && A->now.tv_sec - iter->second.pinged_time > 150) {
+			node_blacklisted(A, &iter->second.ss, iter->second.sslen);
+			iter = r->erase(iter);
+		} else {
+			iter++;
+			i++;
+		}
+	}
+	return 1;
+}
+
 static int
 neighbourhood_maintenance(palure A)
 {
 	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
 	if (0 == r->size())
 		return 0;
+	std::vector<unsigned char> key;
+	key.resize(IDLEN);
+	memcpy(&key[0], A->myid, IDLEN);
 
-	std::map<std::vector<unsigned char>, node>::iterator iter = r->begin();
-	int ir = random() % r->size();
+	std::map<std::vector<unsigned char>, node>::iterator iter, fiter = r->upper_bound(key);
+	int mycount = 0;
+	iter = fiter;
+	int ir = random() % 8;
 
-	for (int i = 0; iter != r->end(), i < ir; iter++, i++) {}
+	for (int i = 0; i < ir;) {
+		if (iter == r->end()) {
+			iter++;
+			continue;
+		}
+
+		if (iter == fiter) {
+			iter++;
+			if (mycount == 1)
+				break;
+			else {
+				mycount++;
+				continue;
+			}
+		}
+
+		iter++;
+		i++;
+	}
+
 	node* n = &iter->second;
 	if (n) {
-
 		unsigned char tid[4];
-		debugf(A, "Sending find_node for neighborhood maintenance.\n");
+		debugf(A, "Sending find_node for bucket maintenance.\n");
 		make_tid(tid, "fn", 0);
 		send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
-			tid, 4, A->myid,0);
+			tid, 4, A->myid, 0);
 		node_pinged(A, n);
 		return 1;
 	}
@@ -1071,17 +1178,23 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 	}
 
 	if (A->now.tv_sec >= A->confirm_nodes_time) {
-		int soon = 0;
-		soon |= bucket_maintenance(A);
-		if (!soon) {
-			if (A->mybucket_grow_time >= A->now.tv_sec - 150)
-				soon |= neighbourhood_maintenance(A);
-		}
+		neighbourhood_maintenance(A);
+		A->confirm_nodes_time = A->now.tv_sec + 3 + random() % 5;
+	}
 
-		if (soon)
-			A->confirm_nodes_time = A->now.tv_sec + 5 + random() % 20;
-		else
-			A->confirm_nodes_time = A->now.tv_sec + 60 + random() % 120;
+	if (A->now.tv_sec >= A->mybucket_grow_time) {
+		bucket_maintenance(A);
+		A->mybucket_grow_time = A->now.tv_sec + 30 + random() % 120;
+	}
+
+	if (A->now.tv_sec >= A->mybucket_expire_time) {
+		expire_buckets(A);
+		A->mybucket_expire_time = A->now.tv_sec + 30 + random() % 120;
+	}
+
+	if (A->now.tv_sec >= A->mybucket_limter_time) {
+		limter_buckets(A);
+		A->mybucket_limter_time = A->now.tv_sec + 60 + random() % 120;
 	}
 
 	if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {

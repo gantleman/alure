@@ -28,6 +28,7 @@ const unsigned char *v, FILE* df,
 struct sockaddr &sin);
 void alure_uninit(ALURE A);
 
+///add to p2p net
 int alure_ping_node(ALURE A, const struct sockaddr *sa, int salen);
 void alure_broadcast(ALURE A, const char* topic, int topic_len, const char* msg, int msg_len, int step=2);
 
