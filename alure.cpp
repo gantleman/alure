@@ -644,7 +644,7 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 	if (A->routetable.empty())
 		return;
 
-	debugf(A, "send gossip step.");
+	debugf(A, "send gossip step.\n");
 	std::vector<unsigned char> k;
 	k.resize(IDLEN);
 	memcpy(&k[0], gid, IDLEN);
@@ -670,7 +670,7 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 		int loop = 0;
 		for (; loop < step; loop++) {
 			if (iter == A->routetable.end()) {
-				iter++;
+				iter = A->routetable.begin();
 				continue;
 			}
 
@@ -769,20 +769,26 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 	memcpy(&k[0], id, IDLEN);
 
 	std::map<std::vector<unsigned char>, node>::iterator iter2, iter = iter2 = r->lower_bound(k);
-	for (int i = 0; iter != r->end() && i < 8; iter--) {
+	for (int i = 0;i < 8;) {
+		if (iter == r->end())
+			iter--;
 		struct node *n = &iter->second;
 		if (node_good(A, n)) {
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
 		}
+		iter--;
 	}
 
-	for (int i = 0; iter2 != r->end() && i < 8; iter2++) {
+	for (int i = 0; i < 8;) {
+		if (iter2 == r->end())
+			iter2 = r->begin();
 		struct node *n = &iter2->second;
 		if (node_good(A, n)) {
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
 		}
+		iter2++;
 	}
 	return numnodes;
 }
@@ -1057,7 +1063,7 @@ limter_buckets(palure A)
 		iter = fiter;
 		for (int i = 0; i < MAX_LIMTER / 2;) {
 			if (iter == r->end()) {
-				iter++;
+				iter = r->begin();
 				continue;
 			}
 			i++;
@@ -1066,7 +1072,7 @@ limter_buckets(palure A)
 		int d = r->size() - MAX_LIMTER;
 		for (int i = 0; i < d;){
 			if (iter == r->end()) {
-				iter++;
+				iter = r->begin();
 				continue;
 			}
 			iter = r->erase(iter);
@@ -1092,7 +1098,7 @@ expire_buckets(palure A)
 
 	for (int i = 0; i < ir; i++) {
 		if (iter == r->end()) {
-			iter++;
+			iter = r->begin();
 			continue;
 		}
 
@@ -1133,7 +1139,7 @@ neighbourhood_maintenance(palure A)
 
 	for (int i = 0; i < ir;) {
 		if (iter == r->end()) {
-			iter++;
+			iter = r->begin();
 			continue;
 		}
 
