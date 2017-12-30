@@ -74,7 +74,6 @@ main(int argc, char **argv)
                 memcpy(&sin6.sin6_addr, buf, 16);
                 break;
             }
-            goto usage;
         }
 		break;
 		case 'p':{

@@ -383,7 +383,10 @@ send_msg(palure A, int step, const unsigned char * id, unsigned char* gid, const
 {
 	unsigned char tid[4];
 	unsigned char mgid[IDLEN];
-	alure_random_bytes(mgid, IDLEN);
+	if (gid)
+		memcpy(mgid, gid, IDLEN);
+	else
+		alure_random_bytes(mgid, IDLEN);
 
 	make_tid(tid, "mg", 0);
 	b_element out, *a;
@@ -394,23 +397,20 @@ send_msg(palure A, int step, const unsigned char * id, unsigned char* gid, const
 	b_insert(&out, "v", A->v, sizeof(A->v));
 	b_insertd(&out, "a", &a);
 	b_insert(a, "id", A->myid, IDLEN);
-	if (gid)
-		b_insert(a, "g", (unsigned char*)gid, IDLEN);
-	 else
-		b_insert(a, "g", (unsigned char*)mgid, IDLEN);
+	b_insert(a, "g", (unsigned char*)mgid, IDLEN);
 	b_insert(a, "n", (unsigned char*)id, IDLEN);
 	b_insert(a, "m", (unsigned char*)msg, msglen);
 	b_insert(a, "tp", (unsigned char*)tp, tplen);
 	b_insert(a, "s", (unsigned char*)&step, sizeof(int));
 	b_package(&out, so);
 
-	send_gossip_step(A, gid, so.c_str(), so.size(), step);
+	send_gossip_step(A, mgid, so.c_str(), so.size(), step);
 }
 
 void alure_broadcast(ALURE iA, const char* topic, int topic_len, const char* msg, int msg_len, int step)
 {
 	palure A = (palure)iA;
-	send_msg(A, step, 0, 0, (char *)topic, topic_len, (char *)msg, msg_len);
+	send_msg(A, step, A->myid, 0, (char *)topic, topic_len, (char *)msg, msg_len);
 }
 
 ///if topic is '*' recive all message
@@ -641,13 +641,16 @@ node_good(palure A, struct node *node)
 static void
 send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int step)
 {
+	if (A->routetable.empty())
+		return;
+
 	debugf(A, "send gossip step.");
 	std::vector<unsigned char> k;
 	k.resize(IDLEN);
 	memcpy(&k[0], gid, IDLEN);
 
 	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.find(k);
-	if (iterg == A->gossip.end())
+	if (iterg != A->gossip.end())
 		return;
 	A->gossip[k] = A->now.tv_sec;
 
@@ -697,7 +700,10 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 static void
 expire_gossip(palure A)
 {
-	debugf(A, "expire gossip.");
+	if (A->gossip.size() == 0)
+		return;
+
+	debugf(A, "expire gossip.\n");
 	std::map<std::vector<unsigned char>, time_t>::iterator iterg = A->gossip.begin();
 	for (; iterg != A->gossip.end();) {
 		if (A->now.tv_sec - iterg->second > 10 * 60) {
@@ -1002,7 +1008,7 @@ const struct sockaddr *from, int fromlen
 			send_msg(A, s, nid, gid, (char *)tp, tp_len, (char *)m, m_len);
 		}
 	}
-
+	return;
 dontread:
 	debugf(A, "Unparseable message: ");
 	debug_printable(A, (unsigned char *)buf, buflen);
@@ -1140,7 +1146,6 @@ neighbourhood_maintenance(palure A)
 				continue;
 			}
 		}
-
 		iter++;
 		i++;
 	}

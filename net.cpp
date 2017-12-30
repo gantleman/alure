@@ -132,7 +132,7 @@ set_nonblocking(int fd, int nonblocking)
 
 
 #define MAX_BOOTSTRAP_NODES 20
-static struct sockaddr_storage bootstrap_nodes[MAX_BOOTSTRAP_NODES];
+static struct sockaddr bootstrap_nodes[MAX_BOOTSTRAP_NODES];
 static int num_bootstrap_nodes = 0;
 
 static
@@ -225,7 +225,7 @@ int main(int argc, char **argv)
     int quiet = 0, ipv6 = 0, safe = 1;
     struct sockaddr_in sin;
     struct sockaddr_in6 sin6;
-    struct sockaddr_storage from;
+    struct sockaddr from;
     socklen_t fromlen;
 	struct sockaddr me;
 	FILE* dht_debug = NULL;
@@ -247,7 +247,7 @@ int main(int argc, char **argv)
     sin6.sin6_family = AF_INET6;
 
     while(1) {
-        opt = getopt(argc, argv, "sq46b:i:o:p:");
+        opt = getopt(argc, argv, "sq6b:i:o:p:");
         if(opt < 0)
 			break;
 
@@ -262,14 +262,12 @@ int main(int argc, char **argv)
 			if (!ipv6 && rc == 1) {
 				me.sa_family = AF_INET;
                 memcpy(&sin.sin_addr, buf, 4);
-				memcpy(&me.sa_data, buf, 4);
                 break;
             }
             rc = inet_pton(AF_INET6, optarg, buf);
 			if (ipv6 && rc == 1) {
 				me.sa_family = AF_INET6;
                 memcpy(&sin6.sin6_addr, buf, 16);
-				memcpy(&me.sa_data, buf, 16);
                 break;
             }
             goto usage;
@@ -387,6 +385,7 @@ int main(int argc, char **argv)
             perror("bind(IPv4)");
             exit(1);
         }
+		memcpy(&me, &sin, sizeof(sockaddr));
 	} else if (s >= 0 && ipv6 != 0) {
         int rc;
         int val = 1;
@@ -404,6 +403,7 @@ int main(int argc, char **argv)
             perror("bind(IPv6)");
             exit(1);
         }
+		memcpy(&me, &sin, sizeof(sockaddr));
     }
 
 	if (s >= 0) {
@@ -420,6 +420,8 @@ int main(int argc, char **argv)
     }
 
     for(i = 0; i < num_bootstrap_nodes; i++) {
+		if (memcmp(&bootstrap_nodes[i], &me, sizeof(sockaddr)) == 0)
+			continue;
 		alure_ping_node(A, (struct sockaddr*)&bootstrap_nodes[i],
                       sizeof(bootstrap_nodes[i]));
         sleep(random() % 3);
@@ -466,7 +468,7 @@ int main(int argc, char **argv)
 					cJSON *cmd_json = cJSON_GetObjectItem(root_json, "cmd");
 					cJSON *tid_json = cJSON_GetObjectItem(root_json, "tid");
 					if (cmd_json != NULL) {
-						if (cmd_json->string == "m")
+						if (strcmp(cmd_json->valuestring,"m")==0)
 						{
 							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
 							if (data_json != NULL) {
@@ -488,7 +490,7 @@ int main(int argc, char **argv)
 									free(o);
 								}
 							}
-						} else if (cmd_json->string == "r") {
+						} else if (strcmp(cmd_json->valuestring, "r") == 0) {
 							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
 							if (data_json) {
 								cJSON *topic_json = cJSON_GetObjectItem(data_json, "topic");
@@ -513,7 +515,7 @@ int main(int argc, char **argv)
 									free(o);
 								}
 							}
-						} else if (cmd_json->string == "d") {
+						} else if (strcmp(cmd_json->valuestring, "d") == 0) {
 							cJSON *data_json = cJSON_GetObjectItem(root_json, "data");
 							if (data_json != NULL) {
 								cJSON *id_json = cJSON_GetObjectItem(data_json, "id");
@@ -535,7 +537,7 @@ int main(int argc, char **argv)
 									free(o);
 								}
 							}
-						} else if (cmd_json->string == "l") {
+						} else if (strcmp(cmd_json->valuestring, "l") == 0) {
 							std::string out;
 							alure_filter_list(A, out);
 							printf("%s\n", out.c_str());
@@ -548,7 +550,7 @@ int main(int argc, char **argv)
 
 							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 							free(o);
-						} else if (cmd_json->string == "p") {
+						} else if (strcmp(cmd_json->valuestring, "p") == 0) {
 							alure_dump_tables(A, stdout);
 							///r
 							cJSON *root_json = cJSON_CreateObject();
