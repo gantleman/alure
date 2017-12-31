@@ -350,7 +350,12 @@ const struct sockaddr *sa, int salen)
 		return -1;
 	}
 
-	return alure_send(A->alure_socket, buf, len, flags, sa, salen);
+	int r = alure_send(A->alure_socket, buf, len, flags, sa, salen);
+	if (r == SOCKET_ERROR){
+		debugf(A, "Attempting to send error\n");
+		errno = EPERM;
+		return -1;
+	}
 }
 
 int
@@ -393,7 +398,7 @@ send_msg(palure A, int step, const unsigned char * id, unsigned char* gid, const
 	std::string so;
 	b_insert(&out, "y", (unsigned char*)"q", 1);
 	b_insert(&out, "t", (unsigned char*)tid, 4);
-	b_insert(&out, "q", (unsigned char*)"msg", 8);
+	b_insert(&out, "q", (unsigned char*)"msg", 3);
 	b_insert(&out, "v", A->v, sizeof(A->v));
 	b_insertd(&out, "a", &a);
 	b_insert(a, "id", A->myid, IDLEN);
@@ -653,10 +658,11 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 	if (iterg != A->gossip.end())
 		return;
 	A->gossip[k] = A->now.tv_sec;
-
+	int count = 0;
 	if (step <= 0) {
 		std::map<std::vector<unsigned char>, node>::iterator iter = A->routetable.begin();
 		for (; iter != A->routetable.end(); iter++) {
+			count++;
 			send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
 		}
 	} else {
@@ -668,33 +674,34 @@ send_gossip_step(palure A, unsigned char *gid, const char* buf, int len, int ste
 		std::map<std::vector<unsigned char>, node>::iterator iter, fiter = A->routetable.lower_bound(myid);
 		iter = fiter;
 		int loop = 0;
-		for (; loop < step; loop++) {
+		for (; loop < step;) {
 			if (iter == A->routetable.end()) {
 				iter = A->routetable.begin();
 				continue;
 			}
-
-			if (iter == fiter) {
-				iter++;
-				if (mycount == 1)
-					break;
-				else {
-					mycount++;
-					continue;
-				}
-			}
-
-			if (loop + 1 >= step && !ping)
-				continue;
-
 			struct node *n = &iter->second;
-			if (node_good(A, n)) {
-				loop++;
+			if (loop + 1 < step) {
+				count++;
+				send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+				if (node_good(A, n))
+					ping++;
+			} else if (!node_good(A, n) && !ping) {
+				ping++;
+				count++;
+				send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
+			} else if (loop + 1 < step && ping){
+				count++;
 				send_wrap(A, buf, len, 0, (const sockaddr *)&iter->second.ss, iter->second.sslen);
 			}
+			loop++;
 			iter++;
+			if (iter == fiter) {
+				break;
+			}
 		}
 	}
+
+	debugf(A, "send gossip count (%d)\n", count);
 }
 
 static void
@@ -773,7 +780,7 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 	for (int i = 0; i < 8;) {
 		if (riter == r->rend())
 			riter = r->rbegin();
-		struct node *n = &iter->second;
+		struct node *n = &riter->second;
 		if (node_good(A, n)) {
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
@@ -858,8 +865,7 @@ const unsigned char *target, int confirm)
 
 static void
 process_message(palure A, const unsigned char *buf, int buflen,
-const struct sockaddr *from, int fromlen
-)
+const struct sockaddr *from, int fromlen)
 {
 	int cur = 0;
 	b_element e;
@@ -893,6 +899,7 @@ const struct sockaddr *from, int fromlen
 		node_ponged(A, id, from, fromlen);
 		if (tid_match(tid, "pn", NULL)) {
 			debugf(A, "Pong!\n");
+			new_node(A, id, from, fromlen);
 		} else if (tid_match(tid, "fn", NULL)) {
 			unsigned char *nodes, *nodes6;
 			int nodes_len, nodes6_len;
@@ -993,7 +1000,10 @@ const struct sockaddr *from, int fromlen
 				goto dontread;
 
 			if (!is_gossip(A, gid)) {
-				debugf(A, "message!\n");
+				std::string st, sm;
+				st.append((char*)tp, tp_len);
+				sm.append((char*)m, m_len);
+				debugf(A, "revice message %s %s!\n", st.c_str(), sm.c_str());
 				std::string key;
 				key.append((char*)tp, tp_len);
 				std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.find("*");
@@ -1006,7 +1016,7 @@ const struct sockaddr *from, int fromlen
 
 				iter = A->filter.find(key);
 				if (iter != A->filter.end()) {
-					std::map<int, filter_value>::iterator citer = iter->second.begin();;
+					std::map<int, filter_value>::iterator citer = iter->second.begin();
 					for (; citer != iter->second.end(); citer++) {
 						citer->second.cb(A, (char*)tp, tp_len, citer->second.closure, (char*)m, m_len);
 					}
@@ -1034,18 +1044,20 @@ bucket_maintenance(palure A)
 	alure_random_bytes(&key[0], IDLEN);
 
 	std::map<std::vector<unsigned char>, node>::iterator iter = r->lower_bound(key);
-	node* n = &iter->second;
-	if (n) {
-		unsigned char id[IDLEN];
-		alure_random_bytes(id, 20);
+	if (iter != r->end()){
+		node* n = &iter->second;
+		if (n) {
+			unsigned char id[IDLEN];
+			alure_random_bytes(id, 20);
 
-		unsigned char tid[4];
-		debugf(A, "Sending find_node for bucket maintenance.\n");
-		make_tid(tid, "fn", 0);
-		send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
-			tid, 4, id, 0);
-		node_pinged(A, n);
-		return 1;
+			unsigned char tid[4];
+			debugf(A, "Sending find_node for bucket maintenance.\n");
+			make_tid(tid, "fn", 0);
+			send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
+				tid, 4, id, 0);
+			node_pinged(A, n);
+			return 1;
+		}
 	}
 	return 0;
 }
@@ -1143,7 +1155,6 @@ neighbourhood_maintenance(palure A)
 			iter = r->begin();
 			continue;
 		}
-
 		if (iter == fiter) {
 			iter++;
 			if (mycount == 1)
@@ -1157,15 +1168,18 @@ neighbourhood_maintenance(palure A)
 		i++;
 	}
 
-	node* n = &iter->second;
-	if (n) {
-		unsigned char tid[4];
-		debugf(A, "Sending find_node for bucket maintenance.\n");
-		make_tid(tid, "fn", 0);
-		send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
-			tid, 4, A->myid, 0);
-		node_pinged(A, n);
-		return 1;
+	if (iter != r->end())
+	{
+		node* n = &iter->second;
+		if (n) {
+			unsigned char tid[4];
+			debugf(A, "Sending find_node for bucket maintenance.\n");
+			make_tid(tid, "fn", 0);
+			send_find_node(A, (struct sockaddr*)&n->ss, n->sslen,
+				tid, 4, A->myid, 0);
+			node_pinged(A, n);
+			return 1;
+		}
 	}
 	return 0;
 }
@@ -1189,30 +1203,30 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 		}
 	}
 
-	if (A->now.tv_sec >= A->confirm_nodes_time) {
-		neighbourhood_maintenance(A);
-		A->confirm_nodes_time = A->now.tv_sec + 3 + random() % 5;
-	}
+	//if (A->now.tv_sec >= A->confirm_nodes_time) {
+	//	neighbourhood_maintenance(A);
+	//	A->confirm_nodes_time = A->now.tv_sec + 5 + random() % 5;
+	//}
 
-	if (A->now.tv_sec >= A->mybucket_grow_time) {
-		bucket_maintenance(A);
-		A->mybucket_grow_time = A->now.tv_sec + 30 + random() % 120;
-	}
+	//if (A->now.tv_sec >= A->mybucket_grow_time) {
+	//	bucket_maintenance(A);
+	//	A->mybucket_grow_time = A->now.tv_sec + 30 + random() % 120;
+	//}
 
-	if (A->now.tv_sec >= A->mybucket_expire_time) {
-		expire_buckets(A);
-		A->mybucket_expire_time = A->now.tv_sec + 30 + random() % 120;
-	}
+	//if (A->now.tv_sec >= A->mybucket_expire_time) {
+	//	expire_buckets(A);
+	//	A->mybucket_expire_time = A->now.tv_sec + 30 + random() % 120;
+	//}
 
-	if (A->now.tv_sec >= A->mybucket_limter_time) {
-		limter_buckets(A);
-		A->mybucket_limter_time = A->now.tv_sec + 60 + random() % 120;
-	}
+	//if (A->now.tv_sec >= A->mybucket_limter_time) {
+	//	limter_buckets(A);
+	//	A->mybucket_limter_time = A->now.tv_sec + 60 + random() % 120;
+	//}
 
-	if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {
-		A->gossip_expire_time = A->now.tv_sec;
-		expire_gossip(A);
-	}
+	//if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {
+	//	A->gossip_expire_time = A->now.tv_sec;
+	//	expire_gossip(A);
+	//}
 	return 0;
 }
 
