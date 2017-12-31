@@ -768,27 +768,28 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 	k.resize(IDLEN);
 	memcpy(&k[0], id, IDLEN);
 
-	std::map<std::vector<unsigned char>, node>::iterator iter2, iter = iter2 = r->lower_bound(k);
-	for (int i = 0;i < 8;) {
-		if (iter == r->end())
-			iter--;
+	std::map<std::vector<unsigned char>, node>::iterator iter = r->lower_bound(k);
+	std::map<std::vector<unsigned char>, node>::reverse_iterator riter(iter);
+	for (int i = 0; i < 8;) {
+		if (riter == r->rend())
+			riter = r->rbegin();
 		struct node *n = &iter->second;
 		if (node_good(A, n)) {
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
 		}
-		iter--;
+		riter++;
 	}
 
 	for (int i = 0; i < 8;) {
-		if (iter2 == r->end())
-			iter2 = r->begin();
-		struct node *n = &iter2->second;
+		if (iter == r->end())
+			iter = r->begin();
+		struct node *n = &iter->second;
 		if (node_good(A, n)) {
 			i++;
 			numnodes = insert_closest_node(nodes, numnodes, id, n);
 		}
-		iter2++;
+		iter++;
 	}
 	return numnodes;
 }
@@ -1221,7 +1222,7 @@ dump_bucket(palure A, FILE *f)
 	std::map<std::vector<unsigned char>, node>* b = &A->routetable;
 	fprintf(f, "Bucket ");
 	std::map<std::vector<unsigned char>, node>::iterator iter = b->begin();
-	for (; iter != b->end();iter++)
+	for (; iter != b->end(); iter++)
 	{
 		char buf[512];
 		unsigned short port;
