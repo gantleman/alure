@@ -197,6 +197,8 @@ typedef struct _alure {
 	time_t mybucket_grow_time;
 	time_t mybucket_expire_time;
 	time_t mybucket_limter_time;
+
+	unsigned int networkid;
 }*palure, alure;
 
 static int
@@ -303,7 +305,7 @@ make_tid(unsigned char *tid_return, const char *prefix, unsigned short seqno)
 
 int alure_init(ALURE* OutD, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
-struct sockaddr &sin)
+struct sockaddr &sin, unsigned int networkid)
 {
 	palure A = new alure;
 	*OutD = A;
@@ -321,6 +323,7 @@ struct sockaddr &sin)
 	A->mybucket_grow_time = A->now.tv_sec;
 	A->confirm_nodes_time = A->now.tv_sec + random() % 3;
 	A->filter_count = 0;
+	A->networkid = networkid;
 	return 1;
 }
 
@@ -368,6 +371,7 @@ const unsigned char *tid, int tid_len)
 	b_insert(&out, "t", (unsigned char*)tid, tid_len);
 	b_insert(&out, "q", (unsigned char*)"ping", 4);
 	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insert(&out, "n", (unsigned char*)&A->networkid, sizeof(A->networkid));
 	b_insertd(&out, "a", &a);
 	b_insert(a, "id", A->myid, IDLEN);
 	b_package(&out, so);
@@ -400,6 +404,7 @@ send_msg(palure A, int step, const unsigned char * id, unsigned char* gid, const
 	b_insert(&out, "t", (unsigned char*)tid, 4);
 	b_insert(&out, "q", (unsigned char*)"msg", 3);
 	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insert(&out, "n", (unsigned char*)&A->networkid, sizeof(A->networkid));
 	b_insertd(&out, "a", &a);
 	b_insert(a, "id", A->myid, IDLEN);
 	b_insert(a, "g", (unsigned char*)mgid, IDLEN);
@@ -618,6 +623,7 @@ const unsigned char *tid, int tid_len)
 	b_insert(&out, "y", (unsigned char*)"r", 1);
 	b_insert(&out, "t", (unsigned char*)tid, tid_len);
 	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insert(&out, "n", (unsigned char*)&A->networkid, sizeof(A->networkid));
 	b_insertd(&out, "r", &r);
 	b_insert(r, "id", A->myid, IDLEN);
 	b_package(&out, so);
@@ -813,6 +819,7 @@ int af, const unsigned char *token, int token_len)
 	b_insert(&out, "y", (unsigned char*)"r", 1);
 	b_insert(&out, "t", (unsigned char*)tid, tid_len);
 	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insert(&out, "n", (unsigned char*)&A->networkid, sizeof(A->networkid));
 	b_insertd(&out, "r", &r);
 	b_insert(r, "id", A->myid, IDLEN);
 	if (nodes_len > 0)
@@ -856,6 +863,7 @@ const unsigned char *target, int confirm)
 	b_insert(&out, "t", (unsigned char*)tid, tid_len);
 	b_insert(&out, "q", (unsigned char*)"find_node", 9);
 	b_insert(&out, "v", A->v, sizeof(A->v));
+	b_insert(&out, "n", (unsigned char*)&A->networkid, sizeof(A->networkid));
 	b_insertd(&out, "a", &a);
 	b_insert(a, "id", A->myid, IDLEN);
 	b_insert(a, "target", (unsigned char*)target, IDLEN);
@@ -871,11 +879,22 @@ const struct sockaddr *from, int fromlen)
 	b_element e;
 	b_parse((char*)buf, buflen, cur, e);
 
-	unsigned char *tid, *y_return;
-	int tid_len, y_len;
+	unsigned char *tid, *y_return, *networkid, *v;
+	int tid_len, y_len, networkid_len, v_len;
+	unsigned int nid;
 	b_find(&e, "t", &tid, tid_len);
 	b_find(&e, "y", &y_return, y_len);
-
+	b_find(&e, "n", &networkid, networkid_len);
+	b_find(&e, "v", &v, v_len);
+	memcpy(&nid, networkid, networkid_len);
+	if (nid != A->networkid) {
+		debugf(A, "error newworkid %d different to %d.\n", A->networkid, nid);
+		return;
+	} else if (memcmp(A->v, v, v_len)!=0) {
+		debugf_hex(A, "error version:", A->v, sizeof(A->v));
+		debugf_hex(A, "different to:", v, v_len);
+		return;
+	}
 	if (y_return[0] == 'r') {
 		b_element* r;
 		b_find(&e, "r", &r);
@@ -1036,7 +1055,7 @@ static int
 bucket_maintenance(palure A)
 {
 	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
-	if (0 == r->size())
+	if (20 > r->size())
 		return 0;
 
 	std::vector<unsigned char> key;
@@ -1106,7 +1125,6 @@ expire_buckets(palure A)
 
 	std::map<std::vector<unsigned char>, node>::iterator iter, fiter = r->lower_bound(key);
 	int ir = random() % (r->size() > 50 ? 50 : r->size());
-	int mycount = 0;
 	iter = fiter;
 
 	for (int i = 0; i < ir; i++) {
@@ -1114,23 +1132,15 @@ expire_buckets(palure A)
 			iter = r->begin();
 			continue;
 		}
-
-		if (iter == fiter) {
-			iter++;
-			if (mycount == 1)
-				break;
-			else {
-				mycount++;
-				continue;
-			}
-		}
 		if (iter->second.pinged >= 4 && A->now.tv_sec - iter->second.pinged_time > 150) {
 			node_blacklisted(A, &iter->second.ss, iter->second.sslen);
 			iter = r->erase(iter);
-		} else {
-			iter++;
-			i++;
 		}
+		iter++;
+		if (iter == fiter) {
+			break;
+		}
+		i++;
 	}
 	return 1;
 }
@@ -1141,12 +1151,12 @@ neighbourhood_maintenance(palure A)
 	std::map<std::vector<unsigned char>, node> *r = &A->routetable;
 	if (0 == r->size())
 		return 0;
+
 	std::vector<unsigned char> key;
 	key.resize(IDLEN);
 	memcpy(&key[0], A->myid, IDLEN);
 
-	std::map<std::vector<unsigned char>, node>::iterator iter, fiter = r->upper_bound(key);
-	int mycount = 0;
+	std::map<std::vector<unsigned char>, node>::iterator viter, iter, fiter = r->upper_bound(key);
 	iter = fiter;
 	int ir = random() % 8;
 
@@ -1155,21 +1165,14 @@ neighbourhood_maintenance(palure A)
 			iter = r->begin();
 			continue;
 		}
+		viter = iter++;
 		if (iter == fiter) {
-			iter++;
-			if (mycount == 1)
-				break;
-			else {
-				mycount++;
-				continue;
-			}
-		}
-		iter++;
+			break;
+		}	
 		i++;
 	}
 
-	if (iter != r->end())
-	{
+	if (viter != r->end()){
 		node* n = &iter->second;
 		if (n) {
 			unsigned char tid[4];
@@ -1203,30 +1206,30 @@ int alure_periodic(ALURE iA, const void *buf, size_t buflen,
 		}
 	}
 
-	//if (A->now.tv_sec >= A->confirm_nodes_time) {
-	//	neighbourhood_maintenance(A);
-	//	A->confirm_nodes_time = A->now.tv_sec + 5 + random() % 5;
-	//}
+	if (A->now.tv_sec >= A->confirm_nodes_time) {
+		neighbourhood_maintenance(A);
+		A->confirm_nodes_time = A->now.tv_sec + 5 + random() % 5;
+	}
 
-	//if (A->now.tv_sec >= A->mybucket_grow_time) {
-	//	bucket_maintenance(A);
-	//	A->mybucket_grow_time = A->now.tv_sec + 30 + random() % 120;
-	//}
+	if (A->now.tv_sec >= A->mybucket_grow_time) {
+		bucket_maintenance(A);
+		A->mybucket_grow_time = A->now.tv_sec + 30 + random() % 120;
+	}
 
-	//if (A->now.tv_sec >= A->mybucket_expire_time) {
-	//	expire_buckets(A);
-	//	A->mybucket_expire_time = A->now.tv_sec + 30 + random() % 120;
-	//}
+	if (A->now.tv_sec >= A->mybucket_expire_time) {
+		expire_buckets(A);
+		A->mybucket_expire_time = A->now.tv_sec + 30 + random() % 120;
+	}
 
-	//if (A->now.tv_sec >= A->mybucket_limter_time) {
-	//	limter_buckets(A);
-	//	A->mybucket_limter_time = A->now.tv_sec + 60 + random() % 120;
-	//}
+	if (A->now.tv_sec >= A->mybucket_limter_time) {
+		limter_buckets(A);
+		A->mybucket_limter_time = A->now.tv_sec + 60 + random() % 120;
+	}
 
-	//if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {
-	//	A->gossip_expire_time = A->now.tv_sec;
-	//	expire_gossip(A);
-	//}
+	if (A->now.tv_sec - A->gossip_expire_time > 10 * 60 || A->gossip.size() > 100) {
+		A->gossip_expire_time = A->now.tv_sec;
+		expire_gossip(A);
+	}
 	return 0;
 }
 

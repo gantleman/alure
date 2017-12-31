@@ -216,6 +216,7 @@ int main(int argc, char **argv)
 	FILE* fd;
     int i, rc;
     int s = -1, port;
+	unsigned int networkid = 1;
     int have_id = 0;
     unsigned char myid[20];
     time_t tosleep = 0;
@@ -247,7 +248,7 @@ int main(int argc, char **argv)
     sin6.sin6_family = AF_INET6;
 
     while(1) {
-        opt = getopt(argc, argv, "sq6b:i:o:p:");
+        opt = getopt(argc, argv, "sq6b:i:o:p:n:");
         if(opt < 0)
 			break;
 
@@ -281,6 +282,10 @@ int main(int argc, char **argv)
 			break;
 		case 'p':{
 			port = atoi(optarg);
+		}
+		break;
+		case 'n':{
+			networkid = atoi(optarg);
 		}
 		break;
         default:
@@ -413,7 +418,7 @@ int main(int argc, char **argv)
 	}
 
 	ALURE A;
-	rc = alure_init(&A, s, myid, (unsigned char*)"JC\0\0", dht_debug, me);
+	rc = alure_init(&A, s, myid, (unsigned char*)"JC\0\0", dht_debug, me, networkid);
     if(rc < 0) {
         perror("dht_init");
         exit(1);

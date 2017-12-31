@@ -25,7 +25,7 @@ typedef void alure_callback(ALURE A, const char* topic, int topic_len, void *clo
 
 int alure_init(ALURE* A, int s, const unsigned char *id,
 const unsigned char *v, FILE* df,
-struct sockaddr &sin);
+struct sockaddr &sin, unsigned int networkid=1);
 void alure_uninit(ALURE A);
 
 ///add to p2p net
