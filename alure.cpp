@@ -460,18 +460,20 @@ void* alure_filter_del(ALURE iA, const char* topic, int topic_len, int fvid)
 void alure_filter_list(ALURE iA, std::string& out)
 {
 	palure A = (palure)iA;
+	out.append("filter list\n");
 	std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.begin();
 	for (; iter != A->filter.end(); iter++) {
 		std::stringstream ss;
-		ss << "topic:" << iter->first << "\n";
-		ss << "count:" << iter->second.size();
+		ss << "-topic:" << iter->first << "\n";
+		ss << " count:" << iter->second.size() << "\n";
 
 		std::map<int, filter_value>::iterator fiter = iter->second.begin();
-		for (; iter != A->filter.end(); iter++) {
-			ss << "id:" << fiter->first;
-			ss << "closure" << fiter->second.closure;
-			ss << "cb" << fiter->second.cb;
+		for (; fiter != iter->second.end(); fiter++) {
+			ss << "--id:" << fiter->first << "\n";
+			ss << "  closure:" << fiter->second.closure << "\n";
+			ss << "  cb:" << fiter->second.cb << "\n";
 		}
+		out.append(ss.str());
 	}
 }
 
