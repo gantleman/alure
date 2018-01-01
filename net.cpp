@@ -550,6 +550,9 @@ int main(int argc, char **argv)
 							cJSON *root_json = cJSON_CreateObject();
 							cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
 							cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+							cJSON *data_json = cJSON_CreateObject();
+							cJSON_AddItemToObject(root_json, "data", data_json);
+							cJSON_AddItemToObject(data_json, "list", cJSON_CreateString(out.c_str()));
 							char *o = cJSON_Print(root_json);
 							int len = strlen(o);
 
