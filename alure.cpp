@@ -29,7 +29,7 @@ THE SOFTWARE.
 #include <vector>
 #include <assert.h>
 #include <set>
-
+#include "cJSON.h"
 #if !defined(_WIN32) || defined(__MINGW32__)
 #include <sys/time.h>
 #endif
@@ -359,6 +359,7 @@ const struct sockaddr *sa, int salen)
 		errno = EPERM;
 		return -1;
 	}
+	return r;
 }
 
 int
@@ -460,21 +461,33 @@ void* alure_filter_del(ALURE iA, const char* topic, int topic_len, int fvid)
 void alure_filter_list(ALURE iA, std::string& out)
 {
 	palure A = (palure)iA;
-	out.append("filter list\n");
+	cJSON *root_json = cJSON_CreateObject();
+	cJSON_AddItemToObject(root_json, "title", cJSON_CreateString("filter list"));
 	std::map<std::string, std::map<int, filter_value>>::iterator iter = A->filter.begin();
 	for (; iter != A->filter.end(); iter++) {
-		std::stringstream ss;
-		ss << "-topic:" << iter->first << "\n";
-		ss << " count:" << iter->second.size() << "\n";
+		cJSON *topic_json = cJSON_CreateObject();
+		cJSON_AddItemToObject(root_json, "topic", topic_json);
+		cJSON_AddItemToObject(topic_json, "name", cJSON_CreateString(iter->first.c_str()));
+		cJSON_AddItemToObject(topic_json, "count", cJSON_CreateNumber(iter->second.size()));
 
 		std::map<int, filter_value>::iterator fiter = iter->second.begin();
 		for (; fiter != iter->second.end(); fiter++) {
-			ss << "--id:" << fiter->first << "\n";
-			ss << "  closure:" << fiter->second.closure << "\n";
-			ss << "  cb:" << fiter->second.cb << "\n";
-		}
-		out.append(ss.str());
+			cJSON *id_json = cJSON_CreateObject();
+			cJSON_AddItemToObject(topic_json, "id", id_json);
+			cJSON_AddItemToObject(id_json, "id", cJSON_CreateNumber(fiter->first));
+			std::stringstream ss;
+			ss  << fiter->second.closure;
+			cJSON_AddItemToObject(id_json, "closure", cJSON_CreateString(ss.str().c_str()));
+			ss.str("");
+			ss << fiter->second.cb;
+			cJSON_AddItemToObject(id_json, "cb", cJSON_CreateString(ss.str().c_str()));
+		}	
 	}
+	char* r = cJSON_Print(root_json);
+	out.append(r);
+	free(r);
+	cJSON_Delete(root_json);
+
 }
 
 static int

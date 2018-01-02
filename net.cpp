@@ -485,12 +485,12 @@ int main(int argc, char **argv)
 									printf("broadcast topic %s %s\n", topic_json->valuestring, msg_json->valuestring);
 
 									///r
-									cJSON *root_json = cJSON_CreateObject();
-									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
-									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
-									char *o = cJSON_Print(root_json);
+									cJSON *rroot_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(rroot_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(rroot_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									char *o = cJSON_Print(rroot_json);
 									int len = strlen(o);
-
+									cJSON_Delete(rroot_json);
 									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 									free(o);
 								}
@@ -507,15 +507,15 @@ int main(int argc, char **argv)
 									int id = alure_filter_add(A, topic_json->valuestring, strlen(topic_json->valuestring), msg_callback, (void*)pp);
 									printf("add topic %d\n", id);
 									///r
-									cJSON *root_json = cJSON_CreateObject();
-									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
-									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									cJSON *rroot_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(rroot_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(rroot_json, "tid", cJSON_CreateString(tid_json->valuestring));
 									cJSON *data_json = cJSON_CreateObject();
-									cJSON_AddItemToObject(root_json, "data", data_json);
+									cJSON_AddItemToObject(rroot_json, "data", data_json);
 									cJSON_AddItemToObject(data_json, "id", cJSON_CreateNumber(id));
-									char *o = cJSON_Print(root_json);
+									char *o = cJSON_Print(rroot_json);
 									int len = strlen(o);
-
+									cJSON_Delete(rroot_json);
 									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 									free(o);
 								}
@@ -532,12 +532,12 @@ int main(int argc, char **argv)
 									}
 									printf("delete topic %d\n", id_json->valueint);
 									///r
-									cJSON *root_json = cJSON_CreateObject();
-									cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
-									cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
-									char *o = cJSON_Print(root_json);
+									cJSON *rroot_json = cJSON_CreateObject();
+									cJSON_AddItemToObject(rroot_json, "cmd", cJSON_CreateString("r"));
+									cJSON_AddItemToObject(rroot_json, "tid", cJSON_CreateString(tid_json->valuestring));
+									char *o = cJSON_Print(rroot_json);
 									int len = strlen(o);
-
+									cJSON_Delete(rroot_json);
 									sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 									free(o);
 								}
@@ -547,30 +547,31 @@ int main(int argc, char **argv)
 							alure_filter_list(A, out);
 							printf("%s\n", out.c_str());
 							///r
-							cJSON *root_json = cJSON_CreateObject();
-							cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
-							cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
+							cJSON *rroot_json = cJSON_CreateObject();
+							cJSON_AddItemToObject(rroot_json, "cmd", cJSON_CreateString("r"));
+							cJSON_AddItemToObject(rroot_json, "tid", cJSON_CreateString(tid_json->valuestring));
 							cJSON *data_json = cJSON_CreateObject();
-							cJSON_AddItemToObject(root_json, "data", data_json);
+							cJSON_AddItemToObject(rroot_json, "data", data_json);
 							cJSON_AddItemToObject(data_json, "list", cJSON_CreateString(out.c_str()));
-							char *o = cJSON_Print(root_json);
+							char *o = cJSON_Print(rroot_json);
 							int len = strlen(o);
-
+							cJSON_Delete(rroot_json);
 							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 							free(o);
 						} else if (strcmp(cmd_json->valuestring, "p") == 0) {
 							alure_dump_tables(A, stdout);
 							///r
-							cJSON *root_json = cJSON_CreateObject();
-							cJSON_AddItemToObject(root_json, "cmd", cJSON_CreateString("r"));
-							cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(tid_json->valuestring));
-							char *o = cJSON_Print(root_json);
+							cJSON *rroot_json = cJSON_CreateObject();
+							cJSON_AddItemToObject(rroot_json, "cmd", cJSON_CreateString("r"));
+							cJSON_AddItemToObject(rroot_json, "tid", cJSON_CreateString(tid_json->valuestring));
+							char *o = cJSON_Print(rroot_json);
 							int len = strlen(o);
-
+							cJSON_Delete(rroot_json);
 							sendto(s, o, len, 0, (struct sockaddr*)&from, fromlen);
 							free(o);
 						}
 					}
+					cJSON_Delete(root_json);
 				}
 
 			}

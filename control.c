@@ -139,6 +139,7 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
 			cJSON_AddItemToObject(data_json, "msg", cJSON_CreateString(msg));
 			out = cJSON_Print(root_json);
+			cJSON_Delete(root_json);
 		}else if (in[0] == 'r') {
 			char c[2] = { 0 };
 			char topic[512] = { 0 };
@@ -155,6 +156,7 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(data_json, "topic", cJSON_CreateString(topic));
 			out = cJSON_Print(root_json);
 			len = strlen(out);
+			cJSON_Delete(root_json);
 		} else if (in[0] == 'd') {
 			char c[2] = { 0 };
 			int id;
@@ -173,6 +175,7 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(data_json, "id", cJSON_CreateNumber(id));
 			out = cJSON_Print(root_json);
 			len = strlen(out);
+			cJSON_Delete(root_json);
 		} else if (in[0] == 'l') {
 			char stid[256] = { 0 };
 			cJSON *root_json = cJSON_CreateObject();
@@ -181,6 +184,7 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
 			out = cJSON_Print(root_json);
 			len = strlen(out);
+			cJSON_Delete(root_json);
 		} else if (in[0] == 'p') {
 			char stid[256] = { 0 };
 			cJSON *root_json = cJSON_CreateObject();
@@ -189,6 +193,7 @@ main(int argc, char **argv)
 			cJSON_AddItemToObject(root_json, "tid", cJSON_CreateString(stid));
 			out = cJSON_Print(root_json);
 			len = strlen(out);
+			cJSON_Delete(root_json);
 		} else
 			continue;
 
