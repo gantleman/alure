@@ -276,25 +276,6 @@ unsigned short *seqno_return)
 		return 0;
 }
 
-static int
-xorcmp(const unsigned char *id1, const unsigned char *id2,
-const unsigned char *ref)
-{
-	int i;
-	for (i = 0; i < IDLEN; i++) {
-		unsigned char xor1, xor2;
-		if (id1[i] == id2[i])
-			continue;
-		xor1 = id1[i] ^ ref[i];
-		xor2 = id2[i] ^ ref[i];
-		if (xor1 < xor2)
-			return -1;
-		else
-			return 1;
-	}
-	return 0;
-}
-
 static void
 make_tid(unsigned char *tid_return, const char *prefix, unsigned short seqno)
 {
@@ -757,8 +738,6 @@ const unsigned char *id, struct node *n)
 	for (i = 0; i < numnodes; i++) {
 		if (id_cmp(n->id, nodes + size * i) == 0)
 			return numnodes;
-		if (xorcmp(n->id, nodes + size * i, id) < 0)
-			break;
 	}
 
 	if (i == 8)
@@ -798,7 +777,7 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 
 	std::map<std::vector<unsigned char>, node>::iterator iter = r->lower_bound(k);
 	std::map<std::vector<unsigned char>, node>::reverse_iterator riter(iter);
-	for (int i = 0; i < 8;) {
+	for (int i = 0; i < 4;) {
 		if (riter == r->rend())
 			riter = r->rbegin();
 		struct node *n = &riter->second;
@@ -809,7 +788,7 @@ const unsigned char *id, std::map<std::vector<unsigned char>, node> *r)
 		riter++;
 	}
 
-	for (int i = 0; i < 8;) {
+	for (int i = 0; i < 4;) {
 		if (iter == r->end())
 			iter = r->begin();
 		struct node *n = &iter->second;
